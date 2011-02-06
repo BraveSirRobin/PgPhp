@@ -38,6 +38,7 @@ class PgPhp
         list($id, $m, $n) = array_values(unpack("Cchar/N2nums", $resp));
         info("Auth response from Postgres: %s, %d, %d", chr($id), $m, $n);
         $auth = $this->getAuthResponse($n, $resp);
+        info("-- Auth response, len: %s\n%s", strlen($auth), $auth);
 
         // Write Authentication response
         $auth = pack('C', ord("p")) . pack('N', strlen($auth) + 5) . "{$auth}\x00";
@@ -51,7 +52,14 @@ class PgPhp
             throw new Exception("Unsupported auth type {$respType}", 9876);
         }
         $salt = substr($bin, -4);
-        return md5("{salt}{$this->dbPass}{salt}", true);
+        $cryptPwd2 = $this->pgMd5Encrypt($this->dbPass, $this->dbUser);
+        $cryptPwd = $this->pgMd5Encrypt(substr($cryptPwd2, 3), $salt);
+        return $cryptPwd;// . $cryptPwd2;
+    }
+
+    private function pgMd5Encrypt ($passwd, $salt) {
+        $buff = $passwd . $salt;
+        return "md5" . md5($buff);
     }
 
 
