@@ -34,16 +34,63 @@ class PgPhp
 
         // Read AuthenticationOk
         $resp = $this->read();
-        //list($id, $m, $n) = unpack("C/N2", $resp);
         list($id, $m, $n) = array_values(unpack("Cchar/N2nums", $resp));
-        info("Auth response from Postgres: %s, %d, %d", chr($id), $m, $n);
         $auth = $this->getAuthResponse($n, $resp);
-        info("-- Auth response, len: %s\n%s", strlen($auth), $auth);
 
         // Write Authentication response
-        $auth = pack('C', ord("p")) . pack('N', strlen($auth) + 5) . "{$auth}\x00";
+        $auth = 'p' . pack('N', strlen($auth) + 5) . "{$auth}\x00";
         $this->write($auth);
-        $this->read();
+
+        // expect BackendKeyData, ParameterStatus, ErrorResponse or NoticeResponse
+        // K, S, E, N
+        $resp = $this->read();
+
+        // Strip out AuthenticationOk
+        if (substr($resp, 0, 1) != 'R') {
+            info("Warning: auth failed!");
+        }
+        $aOk = unpack("NmsgLen/NauthResp", substr($resp, 1, 8));
+        info("AuthOK:\n%s", print_r($aOk, true));
+        $resp = substr($resp, 9);
+
+        switch ($tmp = substr($resp, 0, 1)) {
+        case 'K':
+            $data = unpack("NmsgLen/NprocId/NsecKey");
+            info("BackendKeyData:\n%s", print_r($resp, true));
+            break;
+        case 'S':
+            //$data = unpack("NmsgLen", substr($resp, 1));
+            $data = $this->chompMessages($resp);
+            info("ParameterStatus:\n%s", print_r($data, true));
+            break;
+        case 'E':
+            $data = unpack("NmsgLen", substr($resp, 1, 4));
+            info("ErrorResponse (TODO: Unpack details!):\n%s", print_r($data, true));
+            break;
+        case 'N':
+            $data = unpack("NmsgLen", substr($resp, 1, 4));
+            info("NoticeResponse (TODO: Unpack details!):\n%s", print_r($data, true));
+            break;
+        default:
+            info("WARNING! Unexpected post-auth response: $tmp");
+        }
+
+    }
+
+
+    function chompMessages ($buff) {
+        $p = 0;
+        $data = array();
+        while (substr($buff, $p, 1) == 'S') {
+            $p += 5; // Discard message length
+            $item = array();
+            $item['name'] = substr($buff, $p, strpos($buff, "\x00", $p) - $p);
+            $p += strlen($item['name']) + 1;
+            $item['value'] = substr($buff, $p, strpos($buff, "\x00", $p) - $p);
+            $p += strlen($item['value']) + 1;
+            $data[] = $item;
+        }
+        return $data;
     }
 
 
@@ -54,7 +101,7 @@ class PgPhp
         $salt = substr($bin, -4);
         $cryptPwd2 = $this->pgMd5Encrypt($this->dbPass, $this->dbUser);
         $cryptPwd = $this->pgMd5Encrypt(substr($cryptPwd2, 3), $salt);
-        return $cryptPwd;// . $cryptPwd2;
+        return $cryptPwd;
     }
 
     private function pgMd5Encrypt ($passwd, $salt) {
@@ -135,6 +182,104 @@ class PgPhp
         socket_close($this->sock);
     }
 
+}
+
+
+
+
+
+class PgWireReader
+{
+    private $buff = '';
+    private $p = 0;
+    function __construct ($buff = '') {
+        $this->buff = $buff;
+    }
+
+
+    /** Read and return up to $n messages */
+    function chomp ($n = 0) {
+        $i = $max = 0;
+        while ($n == 0 || $i++ < $n) {
+            switch (substr($this->buff, $this->p, 1)) {
+            case 'R':
+                $ret[] = $this->readAuthentication();
+                break;
+            case 'K':
+                $ret[] = $this->readBackendKeyData();
+                break;
+            case 'B':
+                $ret[] = $this->readBind();
+                break;
+            case '2':
+                $ret[] = $this->readBindComplete();
+                break;
+            case '3':
+                $ret[] = $this->readCloseComplete();
+                break;
+            case 'C':
+                $ret[] = $this->readCommandComplete();
+                break;
+            case 'd':
+                $ret[] = $this->readCopyData();
+                break;
+            case 'c':
+                $ret[] = $this->copyDone();
+                break;
+            case 'G':
+                $ret[] = $this->readCopyInResponse();
+                break;
+            case 'H':
+                $ret[] = $this->readCopyOutResponse();
+                break;
+            case 'D':
+                $ret[] = $this->readDataRow();
+                break;
+            case 'I':
+                $ret[] = $this->readEmptyQueryResponse();
+                break;
+            case 'E':
+                $ret[] = $this->readErrorResponse();
+                break;
+            case 'V':
+                $ret[] = $this->readFunctionCallResponse();
+                break;
+            case 'n':
+                $ret[] = $this->readNoData();
+                break;
+            case 'N':
+                $ret[] = $this->readNoticeResponse();
+                break;
+            case 'A':
+                $ret[] = $this->readNotificationResponse();
+                break;
+            case 't':
+                $ret[] = $this->readParameterDescription();
+                break;
+            case 'S':
+                $ret[] = $this->readParameterStatus();
+                break;
+            case '1':
+                $ret[] = $this->readParseComplete();
+                break;
+            case 's':
+                $ret[] = $this->readPortalSuspended();
+                break;
+            case 'Z':
+                $ret[] = $this->readReadyForQuery();
+                break;
+            case 'T':
+                $ret[] = $this->readRowDescription();
+                break;
+            default:
+                throw new \Exception("Unknown message type", 98765);
+
+            }
+        }
+    }
+
+    function chompAuthMessage () {
+    }
 }
 
 
