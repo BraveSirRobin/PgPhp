@@ -8,6 +8,8 @@ class PgPhp
     private $host = 'localhost';
     private $port = 5432;
 
+    private $database = 'test1';
+
     private $dbUser = 'php';
     private $dbPass = 'letmein';
 
@@ -22,83 +24,46 @@ class PgPhp
 
 
     function connect () {
+        $w = new PgWireWriter();
+        $r = new PgWireReader();
+
+        $w->writeStartupMessage($this->dbUser, $this->database);
         info("Begin connect");
         // Send 'hello' message
-        $start = '';
-        $start .= pack('N', 196608);
-        $start .= "user\x00php\x00";
-        $start .= "database\x00test1\x00\x00";
+        $this->write($w->get());
 
-        $start = pack('N', strlen($start) + 4) . $start;
-        $this->write($start);
-
-        // Read AuthenticationOk
+        // Read Authentication message
         $resp = $this->read();
-        list($id, $m, $n) = array_values(unpack("Cchar/N2nums", $resp));
-        $auth = $this->getAuthResponse($n, $resp);
+        $r->set($resp);
+        $msgs = $r->chomp();
+        if (count($msgs) != 1) {
+            throw new \Exception("Connect Error (1) expected a single message response", 986);
+        } else if ($msgs[0]->getType() != 'R') {
+            throw new \Exception("Connect Error (2) unexpected message type", 987);
+        }
+
+        $auth = $this->getAuthResponse($msgs[0]);
 
         // Write Authentication response
-        $auth = 'p' . pack('N', strlen($auth) + 5) . "{$auth}\x00";
-        $this->write($auth);
+        $w->clear();
+        $w->writePasswordMessage($auth);
+        $this->write($w->get());
 
         // expect BackendKeyData, ParameterStatus, ErrorResponse or NoticeResponse
         // K, S, E, N
         $resp = $this->read();
+        $r->set($resp);
+        $msgs = $r->chomp();
+        var_dump($msgs);
 
-        // Strip out AuthenticationOk
-        if (substr($resp, 0, 1) != 'R') {
-            info("Warning: auth failed!");
-        }
-        $aOk = unpack("NmsgLen/NauthResp", substr($resp, 1, 8));
-        info("AuthOK:\n%s", print_r($aOk, true));
-        $resp = substr($resp, 9);
-
-        switch ($tmp = substr($resp, 0, 1)) {
-        case 'K':
-            $data = unpack("NmsgLen/NprocId/NsecKey");
-            info("BackendKeyData:\n%s", print_r($resp, true));
-            break;
-        case 'S':
-            //$data = unpack("NmsgLen", substr($resp, 1));
-            $data = $this->chompMessages($resp);
-            info("ParameterStatus:\n%s", print_r($data, true));
-            break;
-        case 'E':
-            $data = unpack("NmsgLen", substr($resp, 1, 4));
-            info("ErrorResponse (TODO: Unpack details!):\n%s", print_r($data, true));
-            break;
-        case 'N':
-            $data = unpack("NmsgLen", substr($resp, 1, 4));
-            info("NoticeResponse (TODO: Unpack details!):\n%s", print_r($data, true));
-            break;
-        default:
-            info("WARNING! Unexpected post-auth response: $tmp");
-        }
 
     }
 
-
-    function chompMessages ($buff) {
-        $p = 0;
-        $data = array();
-        while (substr($buff, $p, 1) == 'S') {
-            $p += 5; // Discard message length
-            $item = array();
-            $item['name'] = substr($buff, $p, strpos($buff, "\x00", $p) - $p);
-            $p += strlen($item['name']) + 1;
-            $item['value'] = substr($buff, $p, strpos($buff, "\x00", $p) - $p);
-            $p += strlen($item['value']) + 1;
-            $data[] = $item;
-        }
-        return $data;
-    }
-
-
-    function getAuthResponse ($authType, $bin) {
+    function getAuthResponse (PgMessage $authMsg) {
+        list($authType, $salt) = $authMsg->getData();
         if ($authType != 5) {
-            throw new Exception("Unsupported auth type {$respType}", 9876);
+            throw new \Exception("Unsupported auth type {$respType}", 9876);
         }
-        $salt = substr($bin, -4);
         $cryptPwd2 = $this->pgMd5Encrypt($this->dbPass, $this->dbUser);
         $cryptPwd = $this->pgMd5Encrypt(substr($cryptPwd2, 3), $salt);
         return $cryptPwd;
@@ -184,24 +149,98 @@ class PgPhp
 
 }
 
+/** Simple data container for a single message */
+class PgMessage
+{
+    /** Name of the message type */
+    private $name;
 
+    /** Character of the message type */
+    private $char;
+
+    /** Array of message data, all data fields in order, excluding
+        the message type and message length fields. */
+    private $data;
+
+    function __construct ($name, $char, $data = array()) {
+        $this->name = $name;
+        $this->char = $char;
+        $this->data = $data;
+        if (! $this->name || ! $this->data) {
+            throw new \Exception("Message type is not complete", 554);
+        }
+    }
+
+    function getName () {
+        return $this->name;
+    }
+    function getType () {
+        return $this->char;
+    }
+    function getData () {
+        return $this->data;
+    }
+}
 
 
 
 class PgWireReader
 {
     private $buff = '';
+    private $buffLen = 0;
     private $p = 0;
+    private $msgLen = 0;
+
     function __construct ($buff = '') {
+        $this->set($buff);
+    }
+
+    function get () {
+        return $this->buff;
+    }
+    function set ($buff) {
         $this->buff = $buff;
+        $this->buffLen = strlen($buff);
+        $this->p = 0;
+    }
+    function clear () {
+        $this->buff = '';
+        $this->p = $this->buffLen = 0;
+    }
+    function isSpent () {
+        return ! ($this->p < $this->buffLen);
+    }
+    function hasN ($n) {
+        return ($n == 0) || ($this->p + $n <= $this->buffLen);
+    }
+
+    function doTest ($test = '12345') {
+        $this->set($test);
+        for ($i = 0; $i < strlen($test) + 2; $i++) {
+            $this->p = $i;
+            for ($j = 0; $j < strlen($test) + 2; $j++) {
+                printf("(\$this->p, \$j) = (%d, %d); isSpent %b, hasN(%d), %b\n", $this->p, $j, $this->isSpent(), $j, $this->hasN($j));
+            }
+        }
     }
 
 
     /** Read and return up to $n messages */
     function chomp ($n = 0) {
         $i = $max = 0;
-        while ($n == 0 || $i++ < $n) {
-            switch (substr($this->buff, $this->p, 1)) {
+        $ret = array();
+        while ($this->hasN(5) && ($n == 0 || $i++ < $n)) {
+            $msgType = substr($this->buff, $this->p, 1);
+            $tmp = unpack("N", substr($this->buff, $this->p + 1, 4));
+            $this->msgLen = array_pop($tmp);
+            info("Chomp: extracted type %s, len %d", $msgType, $this->msgLen);
+            if (! $this->hasN($this->msgLen)) {
+                info("Exit!");
+                break;
+            }
+            $this->p += 5;
+
+            switch ($msgType) {
             case 'R':
                 $ret[] = $this->readAuthentication();
                 break;
@@ -224,7 +263,7 @@ class PgWireReader
                 $ret[] = $this->readCopyData();
                 break;
             case 'c':
-                $ret[] = $this->copyDone();
+                $ret[] = $this->readCopyDone();
                 break;
             case 'G':
                 $ret[] = $this->readCopyInResponse();
@@ -273,14 +312,182 @@ class PgWireReader
                 break;
             default:
                 throw new \Exception("Unknown message type", 98765);
-
             }
+        }
+        return $ret;
+    }
+
+    /** Are of many possibilities! */
+    function readAuthentication () {
+        $tmp = unpack('N', substr($this->buff, $this->p, 4));
+        $authType = array_pop($tmp);
+        $this->p += 4;
+        switch ($authType) {
+        case 0:
+            return new PgMessage('AuthenticationOk', 'R', array($authType));
+        case 2:
+            return new PgMessage('AuthenticationKerberosV5', 'R', array($authType));
+        case 3:
+            return new PgMessage('AuthenticationCleartextPassword', 'R', array($authType));
+        case 5:
+            $salt = substr($this->buff, $this->p, 4);
+            $this->p += 4;
+            return new PgMessage('AuthenticationMD5Password', 'R', array($authType, $salt));
+        case 6:
+            return new PgMessage('AuthenticationSCMCredential', 'R', array($authType));
+        case 7:
+            return new PgMessage('AuthenticationGSS', 'R', array($authType));
+        case 8:
+            throw new \Exception("Unsupported auth message: AuthenticationGSSContinue", 6745);
+        case 9:
+            return new PgMessage('AuthenticationSSPI', 'R', array($authType));
+        default:
+            throw new \Exception("Unknown auth message type: {$data['authType']}", 3674);
+
         }
     }
 
-    function chompAuthMessage () {
+    function readBackendKeyData () {
+        $tmp = unpack('Ni/Nj', substr($this->buff, $this->p, 8));
+        $this->p += 8;
+        return new PgMessage('BackendKeyData', 'K', array_values($tmp));
+    }
+
+    function readBindComplete () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readCloseComplete () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readCommandComplete () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readCopyData () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readCopyDone () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readCopyInProgress () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readCopyOutResponse () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readDataRow () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readEmptyQueryResponse () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readErrorResponse () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readFunctionCallResponse () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readNoData () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readNoticeResponse () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readNotificationResponse () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readParameterDescription () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readParameterStatus () {
+        $data = array();
+        $data[] = substr($this->buff, $this->p, strpos($this->buff, "\x00", $this->p) - $this->p);
+        $this->p += strlen($data[0]) + 1;
+        $data[] = substr($this->buff, $this->p, strpos($this->buff, "\x00", $this->p) - $this->p);
+        $this->p += strlen($data[1]) + 1;
+
+        return new PgMessage('ParameterStatus', 'S', $data);
+    }
+
+    function readParseComplete () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readPortalSuspended () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    }
+
+    function readReadyForQuery () {
+        return new PgMessage('ReadyForQuery', 'Z', array(substr($this->buff, $this->p++, 1)));
+    }
+
+    function readRowDescription () {
+        throw new \Exception("Message read method not implemented: " . __METHOD__);
     }
 }
+
+
+
+class PgWireWriter
+{
+    private $buff;
+    function __construct ($buff = '') {
+        $this->buff = $buff;
+    }
+
+    function get () { return $this->buff; }
+    function set ($buff) { $this->buff = $buff; }
+    function clear () { $this->buff = ''; }
+
+    function writeBind () {}
+
+    function writeCancelRequest() {}
+
+    function writeClose () {}
+
+    function writeCopyData () {}
+    function writeCopyDone () {}
+    function writeCopyFail () {}
+    function writeDescribe () {}
+    function writeExecute () {}
+    function writeFlush () {}
+    function writeFunctionCall () {}
+    function writeParse () {}
+    function writePasswordMessage ($msg) {
+        $this->buff .= 'p' . pack('N', strlen($msg) + 5) . "{$msg}\x00";
+    }
+    function writeQuery () {}
+    function writeSSLRequest () {}
+
+    function writeStartupMessage ($user, $database) {
+        $start = pack('N', 196608);
+        $start .= "user\x00{$user}\x00";
+        $start .= "database\x00{$database}\x00\x00";
+        $this->buff .= pack('N', strlen($start) + 4) . $start;
+    }
+    function writeSync () {}
+    function writeTerminate () {}
+}
+
+
+
+/*$w = new PgWireReader;
+$w->doTest();
+die;*/
 
 
 try {
@@ -289,6 +496,7 @@ try {
     $dbh->close();
     info("Test Complete\n[%d] %s", $dbh->lastError(), $dbh->strError());
 } catch (Exception $e) {
+    info("Connect failed:\n%s", $e->getMessage());
 }
 
 
