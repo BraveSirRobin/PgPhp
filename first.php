@@ -1,8 +1,48 @@
 <?php
 const HEXDUMP_BIN = '/usr/bin/hexdump -C';
 
-class PgPhp
+
+function info () {
+    $args = func_get_args();
+    $fmt = array_shift($args);
+    vprintf("{$fmt}\n", $args);
+}
+
+
+function hexdump($subject) {
+    if ($subject === '') {
+        return "00000000\n";
+    }
+    $pDesc = array(
+                   array('pipe', 'r'),
+                   array('pipe', 'w'),
+                   array('pipe', 'r')
+                   );
+    $pOpts = array('binary_pipes' => true);
+    if (($proc = proc_open(HEXDUMP_BIN, $pDesc, $pipes, null, null, $pOpts)) === false) {
+        throw new \Exception("Failed to open hexdump proc!", 675);
+    }
+    fwrite($pipes[0], $subject);
+    fclose($pipes[0]);
+    $ret = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $errs = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    if ($errs) {
+        printf("[ERROR] Stderr content from hexdump pipe: %s\n", $errs);
+    }
+    proc_close($proc);
+    return $ret;
+}
+
+
+/**
+ * Wrapper for a Socket connection to postgres.
+ */
+class PgConnection
 {
+
+    public $debug = false;
 
     private $sock;
     private $host = 'localhost';
@@ -12,6 +52,11 @@ class PgPhp
 
     private $dbUser = 'php';
     private $dbPass = 'letmein';
+
+    private $connected = false;
+
+    /** Connection parameters, given by postgres during setup. */
+    private $params = array();
 
     function __construct () {
         if (! ($this->sock = socket_create(AF_INET, SOCK_STREAM, SOL_TCP))) {
@@ -28,8 +73,6 @@ class PgPhp
         $r = new PgWireReader();
 
         $w->writeStartupMessage($this->dbUser, $this->database);
-        info("Begin connect");
-        // Send 'hello' message
         $this->write($w->get());
 
         // Read Authentication message
@@ -50,23 +93,43 @@ class PgPhp
         $this->write($w->get());
 
         // expect BackendKeyData, ParameterStatus, ErrorResponse or NoticeResponse
-        // K, S, E, N
         $resp = $this->read();
         $r->set($resp);
         $msgs = $r->chomp();
-        var_dump($msgs);
 
+        if (! $msgs) {
+            throw new \Exception("Connect Error (3) - no auth response", 8065);
+        } else if ($msgs[0]->getName() !== 'AuthenticationOk') {
+            throw new \Exception("Connect Error (4) - Auth failed.", 8065);
+        }
+        $c = count($msgs);
+
+        for ($i = 1; $i < $c; $i++) {
+            switch ($msgs[$i]->getName()) {
+            case 'ParameterStatus':
+                list($k, $v) = $msgs[$i]->getData();
+                $this->params[$k] = $v;
+                break;
+            case 'ReadyForQuery':
+                $this->connected = true;
+                break;
+            case 'ErrorResponse':
+                throw new \Exception("Connect failed (5) - error response is post-auth", 8765);
+            case 'NoticeResponse':
+                throw new \Exception("Connect failed (6) - TODO: Test and implement", 8765);
+            }
+        }
 
     }
 
-    function getAuthResponse (PgMessage $authMsg) {
+    private function getAuthResponse (PgMessage $authMsg) {
         list($authType, $salt) = $authMsg->getData();
-        if ($authType != 5) {
-            throw new \Exception("Unsupported auth type {$respType}", 9876);
+        switch ($authType) {
+        case 5:
+            $cryptPwd2 = $this->pgMd5Encrypt($this->dbPass, $this->dbUser);
+            $cryptPwd = $this->pgMd5Encrypt(substr($cryptPwd2, 3), $salt);
+            return $cryptPwd;
         }
-        $cryptPwd2 = $this->pgMd5Encrypt($this->dbPass, $this->dbUser);
-        $cryptPwd = $this->pgMd5Encrypt(substr($cryptPwd2, 3), $salt);
-        return $cryptPwd;
     }
 
     private function pgMd5Encrypt ($passwd, $salt) {
@@ -80,7 +143,9 @@ class PgPhp
     function write ($buff) {
         $bw = 0;
         $contentLength = strlen($buff);
-        info("Write:\n%s", hexdump($buff));
+        if ($this->debug) {
+            info("Write:\n%s", hexdump($buff));
+        }
         while (true) {
             if (($tmp = socket_write($this->sock, $buff)) === false) {
                 throw new \Exception(sprintf("\nSocket write failed: %s\n",
@@ -106,9 +171,6 @@ class PgPhp
         if ($ret === false && $this->lastError() == SOCKET_EINTR) {
             $this->interrupt = true;
         }
-        if ($read[0] === $this->sock) {
-            info("Ready to read!");
-        }
         return $ret;
     }
 
@@ -120,7 +182,9 @@ class PgPhp
         } else if ($select > 0) {
             $buff = $this->readAll();
         }
-        info("Read:\n%s", hexdump($buff));
+        if ($this->debug) {
+            info("Read:\n%s", hexdump($buff));
+        }
         return $buff;
     }
 
@@ -145,6 +209,53 @@ class PgPhp
     function close () {
         $this->connected = false;
         socket_close($this->sock);
+    }
+
+
+    /**
+     * Invoke the given query and store all result messages in $q
+     */
+    function runQuery (PgQuery $q) {
+        if (! $this->connected) {
+            throw new \Exception("Query run failed (0)", 735);
+        }
+        $w = new PgWireWriter;
+        $w->writeQuery($q->getQuery());
+        if (! $this->write($w->get())) {
+            throw new \Exception("Query run failed (1)", 736);
+        }
+
+        // Select calls system select and blocks
+        //if (! $this->select()) {
+        //    throw new \Exception("Query run failed (2)", 737);
+        //}
+        $complete = false;
+        $r = new PgWireReader;
+        $rSet = array();
+        while (! $complete) {
+            $this->select();
+            if (! ($buff = $this->readAll())) {
+                trigger_error("Query read failed", E_USER_WARNING);
+                break;
+            }
+
+            if ($this->debug) {
+                info("Read:\n%s", hexdump($buff));
+            }
+
+
+            $r->set($buff);
+            $msgs = $r->chomp();
+            foreach ($msgs as $m) {
+                switch ($m->getName()) {
+                case 'ErrorResponse':
+                case 'ReadyForQuery':
+                    $complete = true;
+                }
+            }
+            $rSet = array_merge($rSet, $msgs);
+        }
+        $q->setResultSet($rSet);
     }
 
 }
@@ -182,6 +293,55 @@ class PgMessage
     }
 }
 
+/**
+ * Wrapper for the Postgres Simple Query API
+ */
+class PgQuery
+{
+    private $q;
+    private $r;
+
+    function __construct ($q = '') {
+        $this->setQuery($q);
+    }
+
+    function setQuery ($q) {
+        $this->q = $q;
+    }
+
+    function getQuery () {
+        return $this->q;
+    }
+
+    function setResultSet (array $r) {
+        $this->r = $r;
+    }
+
+    function getResultSet () {
+        return $this->r;
+    }
+}
+
+// Unused!
+class PgResultSet
+{
+    private $rDesc;
+    private $rows = array();
+
+    function __construct (PgMessage $rDesc) {
+        if ($rDesc->getName() !== 'RowDescription') {
+            throw new \Exception("Invalid result set row description message", 7548);
+        }
+        $this->rDesc = $rDesc;
+    }
+
+    function addRow (PgMessage $row) {
+        if ($rDesc->getName() !== 'RowData') {
+            throw new \Exception("Invalid result set row data message", 7549);
+        }
+        $this->rows[] = $row;
+    }
+}
 
 
 class PgWireReader
@@ -233,9 +393,9 @@ class PgWireReader
             $msgType = substr($this->buff, $this->p, 1);
             $tmp = unpack("N", substr($this->buff, $this->p + 1, 4));
             $this->msgLen = array_pop($tmp);
-            info("Chomp: extracted type %s, len %d", $msgType, $this->msgLen);
+
             if (! $this->hasN($this->msgLen)) {
-                info("Exit!");
+                info("CHOMP EXIT: Don't have N: %d (%s)", $this->msgLen, dechex($this->msgLen));
                 break;
             }
             $this->p += 5;
@@ -362,7 +522,7 @@ class PgWireReader
     }
 
     function readCommandComplete () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return new PgMessage('CommandComplete', 'C', array($this->_readString()));
     }
 
     function readCopyData () {
@@ -382,7 +542,25 @@ class PgWireReader
     }
 
     function readDataRow () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        $data = array();
+        $ep = $this->p + $this->msgLen - 5;
+        $tmp = unpack('n', substr($this->buff, $this->p, 2));
+        $this->p += 2;
+        $data[] = reset($tmp);
+
+        //info("Consume row descriptions: %d -> %d", $this->p, $ep);
+        while ($this->p < $ep) {
+            $row = array();
+            $tmp = unpack('N', substr($this->buff, $this->p, 4));
+            $this->p += 4;
+            $row[] = reset($tmp);
+            //info("Substr: %d %d : %s", $this->p, $row[0], substr($this->buff, $this->p, $row[0]));
+            $row[] = substr($this->buff, $this->p, $row[0]);
+            $this->p += $row[0];
+            $data[] = $row;
+        }
+        //var_dump($data);
+        return new PgMessage('RowData', 'D', $data);
     }
 
     function readEmptyQueryResponse () {
@@ -390,7 +568,14 @@ class PgWireReader
     }
 
     function readErrorResponse () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        $data = array();
+        $ep = $this->p + $this->msgLen - 5;
+        while ($this->p < $ep) {
+            $ft = substr($this->buff, $this->p++, 1);
+            $row = array($ft, $this->_readString());
+            $data[] = $row;
+        }
+        return new PgMessage('ErrorResponse', 'E', $data);
     }
 
     function readFunctionCallResponse () {
@@ -415,11 +600,8 @@ class PgWireReader
 
     function readParameterStatus () {
         $data = array();
-        $data[] = substr($this->buff, $this->p, strpos($this->buff, "\x00", $this->p) - $this->p);
-        $this->p += strlen($data[0]) + 1;
-        $data[] = substr($this->buff, $this->p, strpos($this->buff, "\x00", $this->p) - $this->p);
-        $this->p += strlen($data[1]) + 1;
-
+        $data[] = $this->_readString();
+        $data[] = $this->_readString();
         return new PgMessage('ParameterStatus', 'S', $data);
     }
 
@@ -436,10 +618,76 @@ class PgWireReader
     }
 
     function readRowDescription () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        $data = array();
+        $ep = $this->p + $this->msgLen - 5;
+        $tmp = unpack('n', substr($this->buff, $this->p, 2));
+        $this->p += 2;
+        $data[] = $tmp;
+
+        //info("Consume row descriptions: %d -> %d", $this->p, $ep);
+        while ($this->p < $ep) {
+            $row = array();
+            $row[] = $this->_readString();
+            $tmp = unpack('Na/nb/Nc/nd/Ne/nf', substr($this->buff, $this->p, 18));
+            //            var_dump($tmp);
+            $row = array_merge($row, array_values($tmp));
+            $this->p += 18;
+            $data[] = $row;
+            //info("Row consume done: %d -> %d", $this->p, $ep);
+        }
+        //var_dump($data);
+        return new PgMessage('RowDescription', 'T', $data);
+    }
+
+    private function _readString () {
+        $r = substr($this->buff, $this->p, strpos($this->buff, "\x00", $this->p) - $this->p);
+        $this->p += strlen($r) + 1;
+        return $r;
     }
 }
 
+/** See http://www.postgresql.org/docs/9.0/static/protocol-message-formats.html */
+class PgTypedMessage
+{
+
+    //Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
+    const SEVERITY = 'S';
+    //Code: the SQLSTATE code for the error (see Appendix A). Not localizable. Always present.
+    const CODE = 'C';
+    //Message: the primary human-readable error message. This should be accurate but terse (typically one line). Always present.
+    const MESSAGE = 'M';
+    //Detail: an optional secondary error message carrying more detail about the problem. Might run to multiple lines.
+    const DETAIL = 'D';
+    //Hint: an optional suggestion what to do about the problem. This is intended to differ from Detail in that it offers advice (potentially inappropriate) rather than hard facts. Might run to multiple lines.
+    const HINT = 'H';
+    //Position: the field value is a decimal ASCII integer, indicating an error cursor position as an index into the original query string. The first character has index 1, and positions are measured in characters not bytes.
+    const POSITION = 'P';
+    //Internal position: this is defined the same as the P field, but it is used when the cursor position refers to an internally generated command rather than the one submitted by the client. The q field will always appear when this field appears.
+    const INTERNAL = 'p';
+    //Internal query: the text of a failed internally-generated command. This could be, for example, a SQL query issued by a PL/pgSQL function.
+    const INTERNAL_QUERY = 'q';
+    //Where: an indication of the context in which the error occurred. Presently this includes a call stack traceback of active procedural language functions and internally-generated queries. The trace is one entry per line, most recent first.
+    const WHERE = 'W';
+    //File: the file name of the source-code location where the error was reported.
+    const FILE = 'F';
+    //Line: the line number of the source-code location where the error was reported.
+    const LINE = 'L';
+    //Routine: the name of the source-code routine reporting the error.
+    const ROUTINE = 'R';
+
+    private $fields = array();
+    function addField ($fieldType, $val) {
+        $this->fields[$fieldType] = $val;
+    }
+
+    function getField ($fieldType) {
+        return isset($this->fields[$fieldType]) ? $this->fields[$fieldType] : null;
+    }
+
+    function toString () {
+        return print_r($this->fields, true);
+    }
+}
 
 
 class PgWireWriter
@@ -470,7 +718,9 @@ class PgWireWriter
     function writePasswordMessage ($msg) {
         $this->buff .= 'p' . pack('N', strlen($msg) + 5) . "{$msg}\x00";
     }
-    function writeQuery () {}
+    function writeQuery ($q) {
+        $this->buff .= 'Q' . pack('N', strlen($q) + 5) . "{$q}\x00";
+    }
     function writeSSLRequest () {}
 
     function writeStartupMessage ($user, $database) {
@@ -485,52 +735,26 @@ class PgWireWriter
 
 
 
-/*$w = new PgWireReader;
-$w->doTest();
-die;*/
 
 
 try {
-    $dbh = new PgPhp;
+    $dbh = new PgConnection;
     $dbh->connect();
-    $dbh->close();
-    info("Test Complete\n[%d] %s", $dbh->lastError(), $dbh->strError());
+    //    $dbh->close();
+    info("Connected OK");
 } catch (Exception $e) {
     info("Connect failed:\n%s", $e->getMessage());
 }
 
 
 
+$q = new PgQuery('select * from nobber;select now() AS fakcol, * from nobber');
 
-function info () {
-    $args = func_get_args();
-    $fmt = array_shift($args);
-    vprintf("{$fmt}\n", $args);
+try {
+    $dbh->debug = true;
+    $dbh->runQuery($q);
+} catch (Exception $e) {
+    info("Query failed:\n%s", $e->getMessage());
 }
 
-
-function hexdump($subject) {
-    if ($subject === '') {
-        return "00000000\n";
-    }
-    $pDesc = array(
-                   array('pipe', 'r'),
-                   array('pipe', 'w'),
-                   array('pipe', 'r')
-                   );
-    $pOpts = array('binary_pipes' => true);
-    if (($proc = proc_open(HEXDUMP_BIN, $pDesc, $pipes, null, null, $pOpts)) === false) {
-        throw new \Exception("Failed to open hexdump proc!", 675);
-    }
-    fwrite($pipes[0], $subject);
-    fclose($pipes[0]);
-    $ret = stream_get_contents($pipes[1]);
-    fclose($pipes[1]);
-    $errs = stream_get_contents($pipes[2]);
-    fclose($pipes[2]);
-    if ($errs) {
-        printf("[ERROR] Stderr content from hexdump pipe: %s\n", $errs);
-    }
-    proc_close($proc);
-    return $ret;
-}
+var_dump($q);
