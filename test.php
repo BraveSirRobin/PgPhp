@@ -15,9 +15,8 @@ function info () {
 
 
 try {
-    $dbh = new pg\PgConnection;
+    $dbh = new pg\Connection;
     $dbh->connect();
-    //    $dbh->close();
     info("Connected OK");
 } catch (Exception $e) {
     info("Connect failed:\n%s", $e->getMessage());
@@ -25,15 +24,21 @@ try {
 
 
 
-$q = new pg\PgQuery('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
+$q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
-$q = new pg\PgQuery('select NULL as A, NULL as B, NULL as C from nobber;');
+$q = new pg\Query('select NULL as A, NULL as B, NULL as C from nobber limit 1;');
+
+
+$q = new pg\Query('copy nobber from stdin with csv');
+$q->pushCopyData("Hiyah!,69,2011-02-13 19:48:14.591936\n");
 
 try {
-    $dbh->debug = true;
     $dbh->runQuery($q);
 } catch (Exception $e) {
     info("Query failed:\n%s", $e->getMessage());
 }
 
 var_dump($q);
+
+
+$dbh->close();

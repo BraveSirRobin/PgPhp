@@ -10,7 +10,7 @@ require_once 'pg.wire.php';
 /**
  * Wrapper for a Socket connection to postgres.
  */
-class PgConnection
+class Connection
 {
 
     public $debug = false;
@@ -178,6 +178,9 @@ class PgConnection
 
 
     function close () {
+        $w = new wire\Writer;
+        $w->writeTerminate();
+        $this->write($w->get());
         $this->connected = false;
         socket_close($this->sock);
     }
@@ -186,7 +189,7 @@ class PgConnection
     /**
      * Invoke the given query and store all result messages in $q
      */
-    function runQuery (PgQuery $q) {
+    function runQuery (Query $q) {
         if (! $this->connected) {
             throw new \Exception("Query run failed (0)", 735);
         }
@@ -196,15 +199,10 @@ class PgConnection
             throw new \Exception("Query run failed (1)", 736);
         }
 
-        // Select calls system select and blocks
-        //if (! $this->select()) {
-        //    throw new \Exception("Query run failed (2)", 737);
-        //}
         $complete = false;
         $r = new wire\Reader;
         $rSet = array();
         while (! $complete) {
-            echo "\nCall Select\n";
             $this->select();
             if (! ($buff = $this->readAll())) {
                 trigger_error("Query read failed", E_USER_WARNING);
@@ -216,14 +214,26 @@ class PgConnection
             }
 
 
-            $r->set($buff);
+            $r->append($buff);
             $msgs = $r->chomp();
-            var_dump($msgs);
             foreach ($msgs as $m) {
                 switch ($m->getName()) {
                 case 'ErrorResponse':
                 case 'ReadyForQuery':
                     $complete = true;
+                case 'CopyInResponse':
+                    if ($cir = $q->popCopyData()) {
+                        $w->clear();
+                        $w->writeCopyData($cir);
+                        $w->writeCopyDone();
+                        info("Write Copy Data:\n%s", wire\hexdump($w->get()));
+                        $this->write($w->get());
+                    } else {
+                        $w->clear();
+                        $w->writeCopyFail('No input data provided');
+                        $this->write($w->get());
+                    }
+                    break;
                 }
             }
             $rSet = array_merge($rSet, $msgs);
@@ -237,10 +247,12 @@ class PgConnection
 /**
  * Wrapper for the Postgres Simple Query API
  */
-class PgQuery
+class Query
 {
     private $q;
     private $r;
+
+    private $copyData;
 
     function __construct ($q = '') {
         $this->setQuery($q);
@@ -260,6 +272,14 @@ class PgQuery
 
     function getResultSet () {
         return $this->r;
+    }
+
+    function pushCopyData ($dt) {
+        $this->copyData[] = $dt;
+    }
+
+    function popCopyData () {
+        return array_pop($this->copyData);
     }
 }
 

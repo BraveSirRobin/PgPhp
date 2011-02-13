@@ -111,18 +111,15 @@ class Reader
         return ($n == 0) || ($this->p + $n <= $this->buffLen);
     }
 
-    function doTest ($test = '12345') {
-        $this->set($test);
-        for ($i = 0; $i < strlen($test) + 2; $i++) {
-            $this->p = $i;
-            for ($j = 0; $j < strlen($test) + 2; $j++) {
-                printf("(\$this->p, \$j) = (%d, %d); isSpent %b, hasN(%d), %b\n", $this->p, $j, $this->isSpent(), $j, $this->hasN($j));
-            }
-        }
+    function append ($buff) {
+        $this->buff .= $buff;
+        $this->buffLen += strlen($buff);
     }
 
 
-    /** Read and return up to $n messages */
+    /**
+     * Read and return up to $n messages, formatted as Message objects.
+     */
     function chomp ($n = 0) {
         $i = $max = 0;
         $ret = array();
@@ -214,7 +211,9 @@ class Reader
         return $ret;
     }
 
-    /** Are of many possibilities! */
+    /**
+     * Accounts for many different possible auth messages.
+     */
     function readAuthentication () {
         $tmp = unpack('N', substr($this->buff, $this->p, 4));
         $authType = array_pop($tmp);
@@ -263,19 +262,37 @@ class Reader
     }
 
     function readCopyData () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        $data = array(substr($this->buff, $this->p, $this->msgLen - 4));
+        $this->p += $this->msgLen - 4;
+        $ret =  new Message('CopyData', 'd', $data);
+        var_dump($ret);
+        return $ret;
     }
 
     function readCopyDone () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return new Message('CopyDone', 'C', array());
     }
 
-    function readCopyInProgress () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+    function readCopyInResponse () {
+        return $this->copyResponseImpl('CopyInResponse', 'G');
+    }
+
+    private function copyResponseImpl ($msgName, $msgCode) {
+        $t = unpack('Ca/nb', substr($this->buff, $this->p));
+        $data = array_values($t);
+        $this->p += 3;
+        $cols = array();
+        for ($i = 0; $i < $data[1]; $i++) {
+            $t = unpack('n', substr($this->buff, $this->p));
+            $cols[] = reset($t);
+            $this->p += 2;
+        }
+        $data[] = $cols;
+        return new Message($msgName, $msgCode, $data);
     }
 
     function readCopyOutResponse () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return $this->copyResponseImpl('CopyOutResponse', 'H');
     }
 
     function readDataRow () {
@@ -415,9 +432,15 @@ class Writer
 
     function writeClose () {}
 
-    function writeCopyData () {}
-    function writeCopyDone () {}
-    function writeCopyFail () {}
+    function writeCopyData ($data) {
+        $this->buff .= 'd' . pack('N', 4 + strlen($data)) . "{$data}";
+    }
+    function writeCopyDone () {
+        $this->buff .= 'c' . pack('N', 4);
+    }
+    function writeCopyFail ($reason) {
+        $this->buff .= 'c' . pack('N', 5 + strlen($reason)) . "{$reason}\x00";
+    }
     function writeDescribe () {}
     function writeExecute () {}
     function writeFlush () {}
@@ -438,5 +461,7 @@ class Writer
         $this->buff .= pack('N', strlen($start) + 4) . $start;
     }
     function writeSync () {}
-    function writeTerminate () {}
+    function writeTerminate () {
+        $this->buff .= 'X' . pack('N', 4);
+    }
 }
