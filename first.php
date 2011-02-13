@@ -277,7 +277,7 @@ class PgMessage
         $this->name = $name;
         $this->char = $char;
         $this->data = $data;
-        if (! $this->name || ! $this->data) {
+        if (! $this->name || ! $this->char) {
             throw new \Exception("Message type is not complete", 554);
         }
     }
@@ -564,16 +564,20 @@ class PgWireReader
     }
 
     function readEmptyQueryResponse () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return new PgMessage('EmptyQueryResponse', 'I', array());
     }
 
     function readErrorResponse () {
         $data = array();
-        $ep = $this->p + $this->msgLen - 5;
+        $ep = $this->p + $this->msgLen - 4;
         while ($this->p < $ep) {
             $ft = substr($this->buff, $this->p++, 1);
             $row = array($ft, $this->_readString());
             $data[] = $row;
+        }
+        $tmp = unpack('C', substr($this->buff, $this->p++, 1));
+        if (reset($tmp) !== 0) {
+            throw new \Exception("Protocol error - missed error response end", 4380);
         }
         return new PgMessage('ErrorResponse', 'E', $data);
     }
@@ -619,7 +623,7 @@ class PgWireReader
 
     function readRowDescription () {
         $data = array();
-        $ep = $this->p + $this->msgLen - 5;
+        $ep = $this->p + $this->msgLen - 4;
         $tmp = unpack('n', substr($this->buff, $this->p, 2));
         $this->p += 2;
         $data[] = $tmp;
@@ -629,7 +633,7 @@ class PgWireReader
             $row = array();
             $row[] = $this->_readString();
             $tmp = unpack('Na/nb/Nc/nd/Ne/nf', substr($this->buff, $this->p, 18));
-            //            var_dump($tmp);
+            //var_dump($tmp);
             $row = array_merge($row, array_values($tmp));
             $this->p += 18;
             $data[] = $row;
@@ -748,7 +752,7 @@ try {
 
 
 
-$q = new PgQuery('select * from nobber;select now() AS fakcol, * from nobber');
+$q = new PgQuery('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
 try {
     $dbh->debug = true;
