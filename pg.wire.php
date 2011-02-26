@@ -388,18 +388,14 @@ class Reader
         $this->p += 2;
         $data[] = $tmp;
 
-        //info("Consume row descriptions: %d -> %d", $this->p, $ep);
         while ($this->p < $ep) {
             $row = array();
             $row[] = $this->_readString();
-            $tmp = unpack('Na/nb/Nc/nd/Ne/nf', substr($this->buff, $this->p, 18));
-            //var_dump($tmp);
+            $tmp = unpack('Na/nb/Nc/nd/le/nf', substr($this->buff, $this->p, 18));
             $row = array_merge($row, array_values($tmp));
             $this->p += 18;
             $data[] = $row;
-            //info("Row consume done: %d -> %d", $this->p, $ep);
         }
-        //var_dump($data);
         return new Message('RowDescription', 'T', $data);
     }
 

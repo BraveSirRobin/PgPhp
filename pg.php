@@ -187,7 +187,8 @@ class Connection
 
 
     /**
-     * Invoke the given query and store all result messages in $q
+     * Invoke the given query and store all result messages in $q.
+     * TODO: run tests to provoke split reads.
      */
     function runQuery (Query $q) {
         if (! $this->connected) {
@@ -221,6 +222,7 @@ class Connection
                 case 'ErrorResponse':
                 case 'ReadyForQuery':
                     $complete = true;
+                break;
                 case 'CopyInResponse':
                     if ($cir = $q->popCopyData()) {
                         $w->clear();
