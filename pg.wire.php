@@ -256,7 +256,7 @@ class Reader
     }
 
     function readBindComplete () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return new Message('BindComplete', '2', array());
     }
 
     function readCloseComplete () {
@@ -336,7 +336,7 @@ class Reader
 
     function readErrorResponse () {
         $data = array();
-        $ep = $this->p + $this->msgLen - 4;
+        $ep = $this->p + $this->msgLen - 5;
         while ($this->p < $ep) {
             $ft = substr($this->buff, $this->p++, 1);
             $row = array($ft, $this->_readString());
@@ -377,7 +377,7 @@ class Reader
     }
 
     function readParseComplete () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return new Message('ParseComplete', 'B', array());
     }
 
     function readPortalSuspended () {
@@ -429,11 +429,24 @@ class Writer
     function set ($buff) { $this->buff = $buff; }
     function clear () { $this->buff = ''; }
 
-    function writeBind () {}
+    // Lots of stuff hard-coded in here!
+    function writeBind ($pName, $stName, $params=array()) {
+        $buff = "{$pName}\x00{$stName}\x00\x00\x01\x00\x00" . pack('n', count($params));
+        // Next, the following pair of fields appear for each parameter
+        foreach ($params as $p) {
+            $buff .= pack('N', strlen($p)) . $p;
+        }
+        $buff .= "\x00\x01\x00\x00";
+        $this->buff .= 'B' . pack('N', strlen($buff) + 4) . $buff;
+    }
 
-    function writeCancelRequest() {}
+    function writeCancelRequest() {
+        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    }
 
-    function writeClose () {}
+    function writeClose () {
+        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    }
 
     function writeCopyData ($data) {
         $this->buff .= 'd' . pack('N', 4 + strlen($data)) . "{$data}";
@@ -444,18 +457,35 @@ class Writer
     function writeCopyFail ($reason) {
         $this->buff .= 'c' . pack('N', 5 + strlen($reason)) . "{$reason}\x00";
     }
-    function writeDescribe () {}
-    function writeExecute () {}
-    function writeFlush () {}
-    function writeFunctionCall () {}
-    function writeParse () {}
+    function writeDescribe () {
+        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    }
+    function writeExecute ($stName, $maxRows=0) {
+        $this->buff .= 'E' . pack('N', strlen($stName) + 9) . "{$stName}\x00" . pack('N', $maxRows);
+
+    }
+    function writeFlush () {
+        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    }
+    function writeFunctionCall () {
+        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    }
+    function writeParse ($stName, $q, $bindParams = array()) {
+        $buff = "{$stName}\x00{$q}\x00" . pack('n', count($bindParams));
+        foreach ($bindParams as $bp) {
+            $buff .= pack('N', $bp);
+        }
+        $this->buff .= 'P' . pack('N', strlen($buff) + 4) . $buff;
+    }
     function writePasswordMessage ($msg) {
         $this->buff .= 'p' . pack('N', strlen($msg) + 5) . "{$msg}\x00";
     }
     function writeQuery ($q) {
         $this->buff .= 'Q' . pack('N', strlen($q) + 5) . "{$q}\x00";
     }
-    function writeSSLRequest () {}
+    function writeSSLRequest () {
+        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    }
 
     function writeStartupMessage ($user, $database) {
         $start = pack('N', 196608);
@@ -463,7 +493,9 @@ class Writer
         $start .= "database\x00{$database}\x00\x00";
         $this->buff .= pack('N', strlen($start) + 4) . $start;
     }
-    function writeSync () {}
+    function writeSync () {
+        $this->buff .= "S\x00\x00\x00\x04";
+    }
     function writeTerminate () {
         $this->buff .= 'X' . pack('N', 4);
     }

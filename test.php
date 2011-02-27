@@ -1,8 +1,9 @@
 <?php
 
 require_once 'pg.php';
+require_once 'pg.exq.php';
 
-
+use pg\exq as pgext;
 
 
 
@@ -25,7 +26,7 @@ try {
 
 
 
-/* Test code - Basic queries  */
+/* Test code - Basic queries  
 $q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
 $q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber limit 3;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\';select nextval(\'myseq\')');
@@ -43,19 +44,34 @@ try {
 }
 
 return;
+*/
 
 
 
-/* Test code - TypeDict  */
+
+/** Test code - extended query protocol  */
+$dbh->debug = true;
+$p = new pgext\Portal($dbh);
+$p->setSql('insert into nobber (moofark, floatie) values ($1, $2);');
+$p->setName('st1');
+$p->parse();
+$p->bind(array('6969', '1.01'));
+$p->execute();
+$p->sync();
+
+
+
+/* Test code - TypeDict  
 $td = new pg\TypeDict($dbh);
 
 echo "Type dictionary constructed OK";
 
-
+*/
 $dbh->close();
 
 
-
+// Return a string representation of the set of results
+// in the given Query object
 function displayQueryResultSet (pg\Query $qry) {
     $buff = '';
     foreach ($qry->getResults() as $i => $rPart) {

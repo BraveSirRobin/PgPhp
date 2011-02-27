@@ -310,6 +310,7 @@ class Query
 }
 
 // These are the fields that are returned as part of a ErrorResponse response.
+// See http://www.postgresql.org/docs/9.0/static/protocol-message-formats.html
 
 //Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
 const ERR_SEVERITY = 'S';
@@ -510,49 +511,5 @@ class TypeDict
 
     function getType ($oid) {
         return isset($this->types[$oid]) ? $this->types[$oid] : null;
-    }
-}
-
-
-/** See http://www.postgresql.org/docs/9.0/static/protocol-message-formats.html */
-class PgTypedMessage
-{
-
-    //Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
-    const SEVERITY = 'S';
-    //Code: the SQLSTATE code for the error (see Appendix A). Not localizable. Always present.
-    const CODE = 'C';
-    //Message: the primary human-readable error message. This should be accurate but terse (typically one line). Always present.
-    const MESSAGE = 'M';
-    //Detail: an optional secondary error message carrying more detail about the problem. Might run to multiple lines.
-    const DETAIL = 'D';
-    //Hint: an optional suggestion what to do about the problem. This is intended to differ from Detail in that it offers advice (potentially inappropriate) rather than hard facts. Might run to multiple lines.
-    const HINT = 'H';
-    //Position: the field value is a decimal ASCII integer, indicating an error cursor position as an index into the original query string. The first character has index 1, and positions are measured in characters not bytes.
-    const POSITION = 'P';
-    //Internal position: this is defined the same as the P field, but it is used when the cursor position refers to an internally generated command rather than the one submitted by the client. The q field will always appear when this field appears.
-    const INTERNAL = 'p';
-    //Internal query: the text of a failed internally-generated command. This could be, for example, a SQL query issued by a PL/pgSQL function.
-    const INTERNAL_QUERY = 'q';
-    //Where: an indication of the context in which the error occurred. Presently this includes a call stack traceback of active procedural language functions and internally-generated queries. The trace is one entry per line, most recent first.
-    const WHERE = 'W';
-    //File: the file name of the source-code location where the error was reported.
-    const FILE = 'F';
-    //Line: the line number of the source-code location where the error was reported.
-    const LINE = 'L';
-    //Routine: the name of the source-code routine reporting the error.
-    const ROUTINE = 'R';
-
-    private $fields = array();
-    function addField ($fieldType, $val) {
-        $this->fields[$fieldType] = $val;
-    }
-
-    function getField ($fieldType) {
-        return isset($this->fields[$fieldType]) ? $this->fields[$fieldType] : null;
-    }
-
-    function toString () {
-        return print_r($this->fields, true);
     }
 }
