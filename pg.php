@@ -188,7 +188,6 @@ class Connection
 
     /**
      * Invoke the given query and store all result messages in $q.
-     * TODO: run tests to provoke split reads.
      */
     function runQuery (Query $q) {
         if (! $this->connected) {
@@ -202,7 +201,7 @@ class Connection
 
         $complete = false;
         $r = new wire\Reader;
-        $rSet = array();
+        $rSet = null;
         while (! $complete) {
             $this->select();
             if (! ($buff = $this->readAll())) {
@@ -219,7 +218,27 @@ class Connection
             $msgs = $r->chomp();
             foreach ($msgs as $m) {
                 switch ($m->getName()) {
+                case 'RowDescription':
+                    $rSet = new ResultSet($m);
+                    break;
+                case 'RowData':
+                    if (! $rSet) {
+                        throw new \Exception("Illegal state - no current row container", 1749);
+                    }
+                    $rSet->addRow($m);
+                    break;
+                case 'CommandComplete':
+                    if ($rSet) {
+                        //$ret[] = $rSet;
+                        $q->addResult($rSet);
+                        $rSet = null;
+                    } else {
+                        //$ret[] = $m;
+                        $q->addResult(new Result($m));
+                    }
                 case 'ErrorResponse':
+                    //$ret[] = $m;
+                    $q->addResult(new Result($m));
                 case 'ReadyForQuery':
                     $complete = true;
                 break;
@@ -238,9 +257,9 @@ class Connection
                     break;
                 }
             }
-            $rSet = array_merge($rSet, $msgs);
+            //$ret = array_merge($ret, $msgs);
         }
-        $q->setResultSet($rSet);
+        //$q->setResultSet($ret);
     }
 
 }
@@ -268,11 +287,15 @@ class Query
         return $this->q;
     }
 
-    function setResultSet (array $r) {
+    /*function setResultSet (array $r) {
         $this->r = $r;
+        }*/
+
+    function addResult (Result $res) {
+        $this->r[] = $res;
     }
 
-    function getResultSet () {
+    function getResults () {
         return $this->r;
     }
 
@@ -283,29 +306,212 @@ class Query
     function popCopyData () {
         return array_pop($this->copyData);
     }
+
 }
 
-// Unused!
-class PgResultSet
+// These are the fields that are returned as part of a ErrorResponse response.
+
+//Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
+const ERR_SEVERITY = 'S';
+//Code: the SQLSTATE code for the error (see Appendix A). Not localizable. Always present.
+const ERR_CODE = 'C';
+//Message: the primary human-readable error message. This should be accurate but terse (typically one line). Always present.
+const ERR_MESSAGE = 'M';
+//Detail: an optional secondary error message carrying more detail about the problem. Might run to multiple lines.
+const ERR_DETAIL = 'D';
+//Hint: an optional suggestion what to do about the problem. This is intended to differ from Detail in that it offers advice (potentially inappropriate) rather than hard facts. Might run to multiple lines.
+const ERR_HINT = 'H';
+//Position: the field value is a decimal ASCII integer, indicating an error cursor position as an index into the original query string. The first character has index 1, and positions are measured in characters not bytes.
+const ERR_POSITION = 'P';
+//Internal position: this is defined the same as the P field, but it is used when the cursor position refers to an internally generated command rather than the one submitted by the client. The q field will always appear when this field appears.
+const ERR_INTERNAL = 'p';
+//Internal query: the text of a failed internally-generated command. This could be, for example, a SQL query issued by a PL/pgSQL function.
+const ERR_INTERNAL_QUERY = 'q';
+//Where: an indication of the context in which the error occurred. Presently this includes a call stack traceback of active procedural language functions and internally-generated queries. The trace is one entry per line, most recent first.
+const ERR_WHERE = 'W';
+//File: the file name of the source-code location where the error was reported.
+const ERR_FILE = 'F';
+//Line: the line number of the source-code location where the error was reported.
+const ERR_LINE = 'L';
+//Routine: the name of the source-code routine reporting the error.
+const ERR_ROUTINE = 'R';
+
+
+/** Wrapper for non-data result types, at the moment either
+    CommandComplete or ErrorResponse */
+class Result
 {
-    private $rDesc;
+    private $raw;
+    private $resultType; // CommandComplete or ErrorResponse
+    private $commandType; // update, insert, etc.
+    private $commandOid; // oid portion of CommandComplete response (optional)
+    private $affectedRows = 0; // # of rows affected by CommandComplete
+    private $errData; // Assoc array of error data
+
+    function __construct (wire\Message $m) {
+        $this->raw = $m;
+        switch ($this->resultType = $m->getName()) {
+        case 'ErrorResponse':
+            $this->errData = array();
+            foreach ($m->getData() as $row) {
+                $this->errData[$row[0]] = $row[1];
+            }
+            break;
+        case 'CommandComplete':
+            $msg = $m->getData();
+            $bits = explode(' ', $msg[0]);
+            $this->commandType = array_shift($bits);
+            if (count($bits) > 1) {
+                list($this->commandOid, $this->affectedRows) = $bits;
+            } else {
+                $this->affectedRows = $bits;
+            }
+            break;
+        }
+    }
+
+    function getResultType () {
+        return $this->raw->getName();
+    }
+
+    function getCommand () {
+        return $this->commandType;
+    }
+
+    function getRowsAffected () {
+        return $this->affectedRows;
+    }
+
+    function getErrDetail () {
+        return $this->errData;
+    }
+}
+
+
+class ResultSet extends Result implements \Iterator, \ArrayAccess
+{
+    const ASSOC = 1;
+    const NUMERIC = 2;
+
+    public $resultStyle = self::ASSOC;
+    private $colNames = array();
+    private $colTypes = array();
     private $rows = array();
+    private $i = 0;
 
     function __construct (wire\Message $rDesc) {
-        if ($rDesc->getName() !== 'RowDescription') {
-            throw new \Exception("Invalid result set row description message", 7548);
-        }
-        $this->rDesc = $rDesc;
+        $this->initCols($rDesc);
     }
 
-    function addRow (wire\Message $row) {
-        if ($rDesc->getName() !== 'RowData') {
-            throw new \Exception("Invalid result set row data message", 7549);
+    function offsetExists ($n) {
+        return array_key_exists($n, $this->rows);
+    }
+
+    function offsetGet ($n) {
+        return $this->rows[$n];
+    }
+
+    function offsetSet ($ofs, $val) {
+        throw new \Exception("ResultSet is a read-only data handler", 9865);
+    }
+
+    function offsetUnset ($ofs) {
+        throw new \Exception("ResultSet is a read-only data handler [2]", 9866);
+    }
+
+    function addRow (wire\Message $msg) {
+        $aRow = array();
+        foreach ($msg->getData() as $i => $dt) {
+            if ($i == 0) {
+                continue;
+            }
+            $aRow[] = $dt[1];
         }
-        $this->rows[] = $row;
+        $this->rows[] = $aRow;
+    }
+
+    /** Munge the column meta data in to something that's easier to work with */
+    private function initCols (wire\Message $msg) {
+        foreach ($msg->getData() as $i => $row) {
+            if ($i == 0) {
+                continue;
+            }
+            $this->colNames[] = $row[0];
+            $this->colTypes[] = $row[3];
+        }
+    }
+
+    function rewind () {
+        $this->i = 0;
+    }
+
+    function current () {
+        return ($this->resultStyle == self::ASSOC) ?
+            array_combine($this->colNames, $this->rows[$this->i])
+            : $this->rows[$this->i];
+    }
+
+    function key () {
+        return $this->i;
+    }
+
+    function next () {
+        $this->i++;
+    }
+
+    function valid () {
+        return $this->i < count($this->rows);
     }
 }
 
+
+// Use low level constructs to a database's type meta data
+// See: http://www.postgresql.org/docs/9.0/interactive/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
+class TypeDict
+{
+    // Format: array(<oid> => <typcategory code>)
+    private $types = array();
+    function __construct (Connection $conn) {
+        $this->initCache($conn);
+    }
+
+    /** Load type data for the given Connection */
+    private function initCache ($conn) {
+        $q = new Query('SELECT oid, typname, typtype, typcategory, typarray FROM pg_type ORDER BY typcategory;');
+        $conn->runQuery($q);
+        $complete = false;
+        // TODO: Rewrite - broken now!
+        foreach ($q->getResultSet() as $r) {
+            $d = $r->getData();
+            switch ($mType = $r->getName()) {
+            case 'RowDescription':
+                break; // Chicken, egg?
+            case 'RowData':
+                $this->types[(int) $d[1][1]] = array($d[1][1], $d[2][1], $d[3][1], $d[4][1], $d[5][1]);
+                break;
+            case 'ReadyForQuery':
+                $complete = true;
+                break;
+            }
+        }
+        if (! $complete) {
+            throw new \Exception("Failed to collect type data", 8746);
+        }
+        array_map(function ($row) {
+                return vprintf("oid: %s; typename: %s; typtype: %s; cat: %s; array: %d\n", $row);
+            },
+            $this->types);
+        printf("\nCached %d types\n", count($this->types));
+    }
+
+    function getTypes () {
+        return $this->types;
+    }
+
+    function getType ($oid) {
+        return isset($this->types[$oid]) ? $this->types[$oid] : null;
+    }
+}
 
 
 /** See http://www.postgresql.org/docs/9.0/static/protocol-message-formats.html */

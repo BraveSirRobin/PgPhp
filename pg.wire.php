@@ -129,7 +129,7 @@ class Reader
             $this->msgLen = array_pop($tmp);
 
             if (! $this->hasN($this->msgLen)) {
-                info("CHOMP EXIT: Don't have N: %d (%s)", $this->msgLen, dechex($this->msgLen));
+                info("CHOMP EXIT: Type %s, need %d (%s)", $msgType, $this->msgLen, dechex($this->msgLen));
                 break;
             }
             $this->p += 5;
@@ -216,7 +216,13 @@ class Reader
      */
     function readAuthentication () {
         $tmp = unpack('N', substr($this->buff, $this->p, 4));
-        $authType = array_pop($tmp);
+        $authType = reset($tmp);
+        /*
+        $tmp = unpack('N', substr($this->buff, $this->p, 4));
+        $test = reset($tmp);
+        printf("Unpack  test: (N: %d), (l: %d)\n%s", $test, $authType, hexdump(substr($this->buff, $this->p, 4)));
+        */
+
         $this->p += 4;
         switch ($authType) {
         case 0:
@@ -238,7 +244,7 @@ class Reader
         case 9:
             return new Message('AuthenticationSSPI', 'R', array($authType));
         default:
-            throw new \Exception("Unknown auth message type: {$data['authType']}", 3674);
+            throw new \Exception("Unknown auth message type: {$authType}", 3674);
 
         }
     }
@@ -313,6 +319,7 @@ class Reader
             } else {
                 $tmp = unpack('N', $fLen);
                 $row[] = reset($tmp);
+                //printf("  --Read row data: %s\n", substr($this->buff, $this->p, $row[0]));
                 $row[] = substr($this->buff, $this->p, $row[0]);
                 $this->p += $row[0];
             }
@@ -391,7 +398,7 @@ class Reader
         while ($this->p < $ep) {
             $row = array();
             $row[] = $this->_readString();
-            $tmp = unpack('Na/nb/Nc/nd/le/nf', substr($this->buff, $this->p, 18));
+            $tmp = unpack('Na/nb/Nc/nd/Ne/nf', substr($this->buff, $this->p, 18));
             $row = array_merge($row, array_values($tmp));
             $this->p += 18;
             $data[] = $row;
