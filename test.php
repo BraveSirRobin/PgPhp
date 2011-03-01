@@ -50,14 +50,32 @@ return;
 
 
 /** Test code - extended query protocol  */
-$dbh->debug = true;
+//$dbh->debug = true;
+
 $p = new pgext\Portal($dbh);
+
+$p2 = new pgext\Portal($dbh);
+
 $p->setSql('insert into nobber (moofark, floatie) values ($1, $2);');
 $p->setName('st1');
+
+$p2->setSql('select moofark from nobber limit 2');
+$p2->setName('st2');
+
 $p->parse();
+
+$p2->parse();
+
 $p->bind(array('6969', '1.01'));
 $p->execute();
-$p->sync();
+
+$p2->bind(array());
+$p2->execute();
+
+$p->bind(array('7070', '1.11'));
+$p->execute();
+
+//$p->sync();
 
 
 

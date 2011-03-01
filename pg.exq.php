@@ -43,9 +43,12 @@ class Portal
     function parse () {
         $w = new wire\Writer;
         $w->writeParse($this->name, $this->sql, $this->ppTypes);
-        echo "Do write\n";
+        printf("Write parse for %s\n", $this->name);
         $this->conn->write($w->get());
-
+        $w->clear();
+        $w->writeSync();
+        $this->conn->write($w->get());
+        $this->readAndDump();
         $this->st = $this->st | self::ST_PARSED;
         $this->st = $this->st & ~self::ST_DESCRIBED;
     }
@@ -58,28 +61,46 @@ class Portal
     function bind (array $params) {
         $w = new wire\Writer;
         $w->writeBind($this->name, $this->name, $params);
-        echo "Do Bind\n";
+        printf("Write bind for %s\n", $this->name);
         $this->conn->write($w->get());
+        /*
+        $w->clear();
+        $w->writeSync();
+        $this->conn->write($w->get());
+        $this->readAndDump();
+        */
     }
 
     function execute ($rowLimit=0) {
         $w = new wire\Writer;
         $w->writeExecute($this->name, $rowLimit);
         $w->writeSync();
-        echo "Do Execute\n";
+        printf("Write execute for %s\n", $this->name);
         $this->conn->write($w->get());
+
+        $w->clear();
+        $w->writeSync();
+        $this->conn->write($w->get());
+        $this->readAndDump();
     }
 
     function sync () {
         $w = new wire\Writer;
         $w->writeSync();
-        echo "Do Sync\n";
+        printf("Write sync for %s\n", $this->name);
         $this->conn->write($w->get());
-        $r = new wire\Reader($this->conn->read());
-        var_dump($r->chomp());
+        $this->readAndDump();
     }
 
     function close () {
+    }
+
+
+    private function readAndDump () {
+        $r = new wire\Reader($this->conn->read());
+        foreach($r->chomp() as $m) {
+            printf("Read %s\n", $m->getName());
+        }
     }
 }
 
