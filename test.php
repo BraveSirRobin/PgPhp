@@ -26,10 +26,10 @@ try {
 
 
 
-/* Test code - Basic queries  
+/* Test code - Basic queries  */
 $q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
-$q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber limit 3;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\';select nextval(\'myseq\')');
+$q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\'');
 
 
 //$q = new pg\Query('copy nobber from stdin with csv');
@@ -44,12 +44,12 @@ try {
 }
 
 return;
-*/
 
 
 
 
-/** Test code - extended query protocol  */
+
+/** Test code - extended query protocol  
 //$dbh->debug = true;
 
 $p = new pgext\Portal($dbh);
@@ -62,20 +62,15 @@ $p->setName('st1');
 $p2->setSql('select moofark from nobber limit 2');
 $p2->setName('st2');
 
+// Typical lifecycle - parse, then execute at will
+$p2->parse();
 $p->parse();
 
-$p2->parse();
-
-$p->bind(array('6969', '1.01'));
-$p->execute();
-
-$p2->bind(array());
 $p2->execute();
+$p->execute(array('6969', '1.01'));
+$p->execute(array('7070', '1.11'));
 
-$p->bind(array('7070', '1.11'));
-$p->execute();
-
-//$p->sync();
+*/
 
 
 

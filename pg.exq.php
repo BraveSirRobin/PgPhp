@@ -3,10 +3,6 @@ namespace pg\exq;
 
 use pg\wire as wire;
 
-// $p = new Portal($conn);
-// $p->setQuery('...');
-// $p->setParseParamTypes(array(...));
-// $p->parse();
 
 class Portal
 {
@@ -40,12 +36,11 @@ class Portal
         $this->name = $name;
     }
 
+    // Sends protocol messages: parse, sync, blocks for response
     function parse () {
         $w = new wire\Writer;
-        $w->writeParse($this->name, $this->sql, $this->ppTypes);
         printf("Write parse for %s\n", $this->name);
-        $this->conn->write($w->get());
-        $w->clear();
+        $w->writeParse($this->name, $this->sql, $this->ppTypes);
         $w->writeSync();
         $this->conn->write($w->get());
         $this->readAndDump();
@@ -58,39 +53,18 @@ class Portal
         $this->st = $this->st | self::ST_DESCRIBED;
     }
 
-    function bind (array $params) {
+    // Sends protocol messages: bind, execute, sync, blocks for response
+    function execute (array $params=array(), $rowLimit=0) {
         $w = new wire\Writer;
         $w->writeBind($this->name, $this->name, $params);
         printf("Write bind for %s\n", $this->name);
-        $this->conn->write($w->get());
-        /*
-        $w->clear();
-        $w->writeSync();
-        $this->conn->write($w->get());
-        $this->readAndDump();
-        */
-    }
-
-    function execute ($rowLimit=0) {
-        $w = new wire\Writer;
         $w->writeExecute($this->name, $rowLimit);
         $w->writeSync();
         printf("Write execute for %s\n", $this->name);
         $this->conn->write($w->get());
-
-        $w->clear();
-        $w->writeSync();
-        $this->conn->write($w->get());
-        $this->readAndDump();
+        $this->readAndDump(); // return
     }
 
-    function sync () {
-        $w = new wire\Writer;
-        $w->writeSync();
-        printf("Write sync for %s\n", $this->name);
-        $this->conn->write($w->get());
-        $this->readAndDump();
-    }
 
     function close () {
     }
