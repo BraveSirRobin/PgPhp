@@ -4,7 +4,7 @@ namespace pg\exq;
 use pg\wire as wire;
 
 
-class Portal
+class Statement
 {
     const ST_PARSED = 1;
     const ST_DESCRIBED = 2;

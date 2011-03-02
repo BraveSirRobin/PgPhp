@@ -7,6 +7,39 @@ use pg\wire;
 require_once 'pg.wire.php';
 
 
+
+// These are the fields that are returned as part of a ErrorResponse response.
+// See http://www.postgresql.org/docs/9.0/static/protocol-message-formats.html
+
+//Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
+const ERR_SEVERITY = 'S';
+//Code: the SQLSTATE code for the error (see Appendix A). Not localizable. Always present.
+const ERR_CODE = 'C';
+//Message: the primary human-readable error message. This should be accurate but terse (typically one line). Always present.
+const ERR_MESSAGE = 'M';
+//Detail: an optional secondary error message carrying more detail about the problem. Might run to multiple lines.
+const ERR_DETAIL = 'D';
+//Hint: an optional suggestion what to do about the problem. This is intended to differ from Detail in that it offers advice (potentially inappropriate) rather than hard facts. Might run to multiple lines.
+const ERR_HINT = 'H';
+//Position: the field value is a decimal ASCII integer, indicating an error cursor position as an index into the original query string. The first character has index 1, and positions are measured in characters not bytes.
+const ERR_POSITION = 'P';
+//Internal position: this is defined the same as the P field, but it is used when the cursor position refers to an internally generated command rather than the one submitted by the client. The q field will always appear when this field appears.
+const ERR_INTERNAL = 'p';
+//Internal query: the text of a failed internally-generated command. This could be, for example, a SQL query issued by a PL/pgSQL function.
+const ERR_INTERNAL_QUERY = 'q';
+//Where: an indication of the context in which the error occurred. Presently this includes a call stack traceback of active procedural language functions and internally-generated queries. The trace is one entry per line, most recent first.
+const ERR_WHERE = 'W';
+//File: the file name of the source-code location where the error was reported.
+const ERR_FILE = 'F';
+//Line: the line number of the source-code location where the error was reported.
+const ERR_LINE = 'L';
+//Routine: the name of the source-code routine reporting the error.
+const ERR_ROUTINE = 'R';
+
+
+
+
+
 /**
  * Wrapper for a Socket connection to postgres.
  */
@@ -14,7 +47,6 @@ class Connection
 {
 
     public $debug = false;
-
     private $sock;
     private $host = 'localhost';
     private $port = 5432;
@@ -25,6 +57,8 @@ class Connection
     private $dbPass = 'letmein';
 
     private $connected = false;
+
+    private $meta;
 
     /** Connection parameters, given by postgres during setup. */
     private $params = array();
@@ -188,6 +222,7 @@ class Connection
 
     /**
      * Invoke the given query and store all result messages in $q.
+     * @return void
      */
     function runQuery (Query $q) {
         if (! $this->connected) {
@@ -229,15 +264,12 @@ class Connection
                     break;
                 case 'CommandComplete':
                     if ($rSet) {
-                        //$ret[] = $rSet;
                         $q->addResult($rSet);
                         $rSet = null;
                     } else {
-                        //$ret[] = $m;
                         $q->addResult(new Result($m));
                     }
                 case 'ErrorResponse':
-                    //$ret[] = $m;
                     $q->addResult(new Result($m));
                 case 'ReadyForQuery':
                     $complete = true;
@@ -257,9 +289,14 @@ class Connection
                     break;
                 }
             }
-            //$ret = array_merge($ret, $msgs);
         }
-        //$q->setResultSet($ret);
+    }
+
+
+    function getMeta () {
+        return (is_null($this->meta)) ?
+            ($this->meta = new Meta($this))
+            : $this->meta;
     }
 
 }
@@ -309,33 +346,6 @@ class Query
 
 }
 
-// These are the fields that are returned as part of a ErrorResponse response.
-// See http://www.postgresql.org/docs/9.0/static/protocol-message-formats.html
-
-//Severity: the field contents are ERROR, FATAL, or PANIC (in an error message), or WARNING, NOTICE, DEBUG, INFO, or LOG (in a notice message), or a localized translation of one of these. Always present.
-const ERR_SEVERITY = 'S';
-//Code: the SQLSTATE code for the error (see Appendix A). Not localizable. Always present.
-const ERR_CODE = 'C';
-//Message: the primary human-readable error message. This should be accurate but terse (typically one line). Always present.
-const ERR_MESSAGE = 'M';
-//Detail: an optional secondary error message carrying more detail about the problem. Might run to multiple lines.
-const ERR_DETAIL = 'D';
-//Hint: an optional suggestion what to do about the problem. This is intended to differ from Detail in that it offers advice (potentially inappropriate) rather than hard facts. Might run to multiple lines.
-const ERR_HINT = 'H';
-//Position: the field value is a decimal ASCII integer, indicating an error cursor position as an index into the original query string. The first character has index 1, and positions are measured in characters not bytes.
-const ERR_POSITION = 'P';
-//Internal position: this is defined the same as the P field, but it is used when the cursor position refers to an internally generated command rather than the one submitted by the client. The q field will always appear when this field appears.
-const ERR_INTERNAL = 'p';
-//Internal query: the text of a failed internally-generated command. This could be, for example, a SQL query issued by a PL/pgSQL function.
-const ERR_INTERNAL_QUERY = 'q';
-//Where: an indication of the context in which the error occurred. Presently this includes a call stack traceback of active procedural language functions and internally-generated queries. The trace is one entry per line, most recent first.
-const ERR_WHERE = 'W';
-//File: the file name of the source-code location where the error was reported.
-const ERR_FILE = 'F';
-//Line: the line number of the source-code location where the error was reported.
-const ERR_LINE = 'L';
-//Routine: the name of the source-code routine reporting the error.
-const ERR_ROUTINE = 'R';
 
 
 /** Wrapper for non-data result types, at the moment either
@@ -394,7 +404,7 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
     const ASSOC = 1;
     const NUMERIC = 2;
 
-    public $resultStyle = self::ASSOC;
+    public $fetchStyle = self::ASSOC;
     private $colNames = array();
     private $colTypes = array();
     private $rows = array();
@@ -447,7 +457,7 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
     }
 
     function current () {
-        return ($this->resultStyle == self::ASSOC) ?
+        return ($this->fetchStyle == self::ASSOC) ?
             array_combine($this->colNames, $this->rows[$this->i])
             : $this->rows[$this->i];
     }
@@ -468,41 +478,83 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
 
 // Use low level constructs to a database's type meta data
 // See: http://www.postgresql.org/docs/9.0/interactive/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
-class TypeDict
+class Meta
 {
-    // Format: array(<oid> => <typcategory code>)
-    private $types = array();
+    private $state = 0;
+    private $conn;
+    private $types = array(); // Format: array(<type oid> => <typcategory code>)
+    private $tables = array(); // Format: array(<table oid> => array(nspname, tablename, array(oid, colname, coltype, collen)));
+    private $singleNs;
     function __construct (Connection $conn) {
-        $this->initCache($conn);
+        $this->conn = $conn;
+        $this->initTypeCache();
+        $this->initTablesCache();
     }
 
     /** Load type data for the given Connection */
-    private function initCache ($conn) {
-        $q = new Query('SELECT oid, typname, typtype, typcategory, typarray FROM pg_type ORDER BY typcategory;');
-        $conn->runQuery($q);
-        $complete = false;
-        // TODO: Rewrite - broken now!
-        foreach ($q->getResultSet() as $r) {
-            $d = $r->getData();
-            switch ($mType = $r->getName()) {
-            case 'RowDescription':
-                break; // Chicken, egg?
-            case 'RowData':
-                $this->types[(int) $d[1][1]] = array($d[1][1], $d[2][1], $d[3][1], $d[4][1], $d[5][1]);
-                break;
-            case 'ReadyForQuery':
-                $complete = true;
-                break;
+    private function initTypeCache () {
+        if ($this->state & 1) {
+            printf("Shzaaaame = type cache\n");
+            return;
+        }
+        $q = new Query('SELECT oid, typname, typtype, typcategory, typarray FROM pg_type WHERE typtype = \'b\' ORDER BY typcategory;');
+        $this->conn->runQuery($q);
+        $done = false;
+        foreach ($q->getResults() as $res) {
+            if ($res instanceof ResultSet) {
+                $done = true;
+                $res->fetchStyle = ResultSet::ASSOC;
+                foreach ($res as $row) {
+                    $this->types[$row['oid']] = $row;
+                }
             }
         }
-        if (! $complete) {
-            throw new \Exception("Failed to collect type data", 8746);
+        if (! $done) {
+            throw new \Exception("Failed to initialise type cache", 2752);
         }
-        array_map(function ($row) {
-                return vprintf("oid: %s; typename: %s; typtype: %s; cat: %s; array: %d\n", $row);
-            },
-            $this->types);
-        printf("\nCached %d types\n", count($this->types));
+        $this->state = $this->state | 1;
+    }
+
+    private function initTablesCache () {
+        if ($this->state & 2) {
+            printf("Shzaaaame = tables cache\n");
+            return;
+        }
+        $this->initTypeCache();
+        $qry = 'select n.nspname, c.oid, c.relname, a.attname, a.atttypid, a.attlen ' .
+            'from pg_namespace n ' .
+            'inner join pg_class c ' .
+            'on n.oid = c.relnamespace ' .
+            '    and c.relkind = \'r\' ' .
+            '    and n.nspname != \'information_schema\' ' .
+            '    and n.nspname not like \'pg_%\' ' .
+            'inner join pg_attribute a ' .
+            'on c.oid = a.attrelid ' .
+            '    and a.attnum > 0 ' .
+            'order by n.nspname, c.relname';
+        $q = new Query($qry);
+        $this->conn->runQuery($q);
+        $done = false;
+        foreach ($q->getResults() as $res) {
+            if ($res instanceof ResultSet) {
+                $res->fetchStyle = ResultSet::ASSOC;
+                $done = true;
+                foreach ($res as $row) {
+                    if (! array_key_exists($row['oid'], $this->tables)) {
+                        $this->tables[$row['oid']] = array($row['nspname'],
+                                                          $row['relname'],
+                                                          array($row['attname'], $row['atttypid'], $row['attlen'])
+                                                          );
+                    } else {
+                        $this->tables[$row['oid']][2][] = array($row['attname'], $row['atttypid'], $row['attlen']);
+                    }
+                }
+            }
+        }
+        if (! $done) {
+            trigger_error("No tables were cached", E_USER_WARNING);
+        }
+        $this->state = $this->state | 2;
     }
 
     function getTypes () {
@@ -513,3 +565,78 @@ class TypeDict
         return isset($this->types[$oid]) ? $this->types[$oid] : null;
     }
 }
+
+class Statement
+{
+    const ST_PARSED = 1;
+    const ST_DESCRIBED = 2;
+    const ST_BOUND = 4;
+    const ST_EXECD = 8;
+
+    private $conn;
+    private $sql;
+    private $name = false;
+    private $ppTypes = array();
+    private $st = 0;
+
+    function __construct (\pg\Connection $conn) {
+        $this->conn = $conn;
+    }
+
+    function getState () { return $this->st; }
+
+
+    function setSql ($q) {
+        $this->sql = $q;
+    }
+
+    function setParseParamTypes (array $oids) {
+        $this->ppTypes;
+    }
+
+    function setName ($name) {
+        $this->name = $name;
+    }
+
+    // Sends protocol messages: parse, sync, blocks for response
+    function parse () {
+        $w = new wire\Writer;
+        printf("Write parse for %s\n", $this->name);
+        $w->writeParse($this->name, $this->sql, $this->ppTypes);
+        $w->writeSync();
+        $this->conn->write($w->get());
+        $this->readAndDump();
+        $this->st = $this->st | self::ST_PARSED;
+        $this->st = $this->st & ~self::ST_DESCRIBED;
+    }
+
+    function describe () {
+        // ...
+        $this->st = $this->st | self::ST_DESCRIBED;
+    }
+
+    // Sends protocol messages: bind, execute, sync, blocks for response
+    function execute (array $params=array(), $rowLimit=0) {
+        $w = new wire\Writer;
+        $w->writeBind($this->name, $this->name, $params);
+        printf("Write bind for %s\n", $this->name);
+        $w->writeExecute($this->name, $rowLimit);
+        $w->writeSync();
+        printf("Write execute for %s\n", $this->name);
+        $this->conn->write($w->get());
+        $this->readAndDump(); // return
+    }
+
+
+    function close () {
+    }
+
+
+    private function readAndDump () {
+        $r = new wire\Reader($this->conn->read());
+        foreach($r->chomp() as $m) {
+            printf("Read %s\n", $m->getName());
+        }
+    }
+}
+

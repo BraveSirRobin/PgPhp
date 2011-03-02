@@ -1,9 +1,9 @@
 <?php
 
 require_once 'pg.php';
-require_once 'pg.exq.php';
+//require_once 'pg.exq.php';
 
-use pg\exq as pgext;
+//use pg\exq as pgext;
 
 
 
@@ -26,7 +26,7 @@ try {
 
 
 
-/* Test code - Basic queries  */
+/* Test code - Basic queries  
 $q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
 $q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\'');
@@ -44,7 +44,7 @@ try {
 }
 
 return;
-
+*/
 
 
 
@@ -52,9 +52,9 @@ return;
 /** Test code - extended query protocol  
 //$dbh->debug = true;
 
-$p = new pgext\Portal($dbh);
+$p = new pg\Statement($dbh);
 
-$p2 = new pgext\Portal($dbh);
+$p2 = new pg\Statement($dbh);
 
 $p->setSql('insert into nobber (moofark, floatie) values ($1, $2);');
 $p->setName('st1');
@@ -74,12 +74,12 @@ $p->execute(array('7070', '1.11'));
 
 
 
-/* Test code - TypeDict  
-$td = new pg\TypeDict($dbh);
+/* Test code - Meta  */
+$td = $dbh->getMeta();
 
-echo "Type dictionary constructed OK";
+echo "\n\nType dictionary constructed OK\n";
 
-*/
+
 $dbh->close();
 
 
@@ -90,7 +90,7 @@ function displayQueryResultSet (pg\Query $qry) {
     foreach ($qry->getResults() as $i => $rPart) {
         if ($rPart instanceof pg\ResultSet) {
             $buff .= "Result Set:\n";
-            $rPart->resultStyle = pg\ResultSet::NUMERIC;
+            $rPart->fetchStyle = pg\ResultSet::ASSOC;
             foreach ($rPart as $row) {
                 foreach ($row as $colName => $col) {
                     $buff .= "  $colName: $col";
