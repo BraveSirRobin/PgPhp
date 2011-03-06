@@ -125,7 +125,7 @@ class Reader
         $ret = array();
         while ($this->hasN(5) && ($n == 0 || $i++ < $n)) {
             $msgType = substr($this->buff, $this->p, 1);
-            $tmp = unpack("N", substr($this->buff, $this->p + 1, 4));
+            $tmp = unpack("N", substr($this->buff, $this->p + 1));
             $this->msgLen = array_pop($tmp);
 
             if (! $this->hasN($this->msgLen)) {
@@ -215,7 +215,7 @@ class Reader
      * Accounts for many different possible auth messages.
      */
     function readAuthentication () {
-        $tmp = unpack('N', substr($this->buff, $this->p, 4));
+        $tmp = unpack('N', substr($this->buff, $this->p));
         $authType = reset($tmp);
         $this->p += 4;
         switch ($authType) {
@@ -244,7 +244,7 @@ class Reader
     }
 
     function readBackendKeyData () {
-        $tmp = unpack('Ni/Nj', substr($this->buff, $this->p, 8));
+        $tmp = unpack('Ni/Nj', substr($this->buff, $this->p));
         $this->p += 8;
         return new Message('BackendKeyData', 'K', array_values($tmp));
     }
@@ -298,11 +298,10 @@ class Reader
     function readDataRow () {
         $data = array();
         $ep = $this->p + $this->msgLen - 5;
-        $tmp = unpack('n', substr($this->buff, $this->p, 2));
+        $tmp = unpack('n', substr($this->buff, $this->p));
         $this->p += 2;
         $data[] = reset($tmp);
 
-        //info("Consume row descriptions: %d -> %d", $this->p, $ep);
         while ($this->p < $ep) {
             $row = array();
             $fLen = substr($this->buff, $this->p, 4);
@@ -313,14 +312,11 @@ class Reader
             } else {
                 $tmp = unpack('N', $fLen);
                 $row[] = reset($tmp);
-                //printf("  --Read row data: %s\n", substr($this->buff, $this->p, $row[0]));
                 $row[] = substr($this->buff, $this->p, $row[0]);
                 $this->p += $row[0];
             }
-            //info("Substr: %d %d : %s", $this->p, $row[0], substr($this->buff, $this->p, $row[0]));
             $data[] = $row;
         }
-        //var_dump($data);
         return new Message('RowData', 'D', $data);
     }
 
@@ -336,7 +332,7 @@ class Reader
             $row = array($ft, $this->_readString());
             $data[] = $row;
         }
-        $tmp = unpack('C', substr($this->buff, $this->p++, 1));
+        $tmp = unpack('C', substr($this->buff, $this->p++));
         if (reset($tmp) !== 0) {
             throw new \Exception("Protocol error - missed error response end", 4380);
         }
@@ -361,11 +357,11 @@ class Reader
 
     function readParameterDescription () {
         $data = array();
-        $tmp = unpack('n', substr($this->buff, $this->p, 2));
+        $tmp = unpack('n', substr($this->buff, $this->p));
         $this->p += 2;
         $nParams = reset($tmp);
         for ($i = 0; $i < $nParams; $i++) {
-            $tmp = unpack('N', substr($this->buff, $this->p, 4));
+            $tmp = unpack('N', substr($this->buff, $this->p));
             $this->p += 4;
             $data[] = reset($tmp);
         }
@@ -394,14 +390,14 @@ class Reader
     function readRowDescription () {
         $data = array();
         $ep = $this->p + $this->msgLen - 4;
-        $tmp = unpack('n', substr($this->buff, $this->p, 2));
+        $tmp = unpack('n', substr($this->buff, $this->p));
         $this->p += 2;
         $data[] = $tmp;
 
         while ($this->p < $ep) {
             $row = array();
             $row[] = $this->_readString();
-            $tmp = unpack('Na/nb/Nc/nd/Ne/nf', substr($this->buff, $this->p, 18));
+            $tmp = unpack('Na/nb/Nc/nd/Ne/nf', substr($this->buff, $this->p));
             $row = array_merge($row, array_values($tmp));
             $this->p += 18;
             $data[] = $row;
