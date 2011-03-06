@@ -36,9 +36,10 @@ $q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobbe
 //$q->pushCopyData("Hiyah!,69,2011-02-13 19:48:14.591936\n");
 
 try {
-    //    $dbh->debug = true;
+    //$dbh->debug = true;
+    echo "Run Query\n";
     $dbh->runQuery($q);
-    echo displayQueryResultSet($q);
+    echo displayQueryResultSet($q->getResults());
 } catch (Exception $e) {
     info("Query failed:\n%s", $e->getMessage());
 }
@@ -49,37 +50,50 @@ return;
 
 
 
-/** Test code - extended query protocol  */
+/** Test code - extended query protocol - Write command */
 //$dbh->debug = true;
 
 $p = new pg\Statement($dbh);
 
-//$p2 = new pg\Statement($dbh);
-
 $p->setSql('insert into nobber (moofark, floatie) values ($1, $2);');
 $p->setName('st1');
-
-//$p2->setSql('select moofark from nobber where moofark = $1 limit 2');
-//$p2->setName('st2');
-
-// Typical lifecycle - parse, then execute at will
-//echo "Parse:\n";
-//var_dump($p2->parse());
-
-//echo "\n\nDescribe:\n";
-//var_dump($p2->describe());
 
 echo "\nParse\n\n";
 var_dump($p->parse());
 
-//echo "\n\nExecute:\n";
-//var_dump($p2->execute(array(69)));
+echo "\nExecute\n\n";
+echo displayQueryResultSet($p->execute(array('6969', '1.01')));
 
 
-//echo "\n\nExecute (2):\n";
-//var_dump($p2->execute(array(6969)));
-var_dump($p->execute(array('6969', '1.01')));
-/*  $p->execute(array('7070', '1.11'));*/
+
+
+
+
+
+
+
+
+
+/** Test code - extended query protocol - Select command  
+//$dbh->debug = true;
+
+$p = new pg\Statement($dbh);
+
+$p->setSql('select * from nobber n1');
+$p->setName('st3');
+
+echo "\nParse\n\n";
+var_dump($p->parse());
+
+echo "\n\nExecute:\n";
+echo displayQueryResultSet($p->execute());
+*/
+
+
+
+
+
+
 
 
 
@@ -88,8 +102,8 @@ var_dump($p->execute(array('6969', '1.01')));
 /* Test code - Meta 
 $td = $dbh->getMeta();
 $td->dumpTypes();
-*/
 echo "\n\nType dictionary constructed OK\n";
+*/
 
 
 $dbh->close();
@@ -97,11 +111,11 @@ $dbh->close();
 
 // Return a string representation of the set of results
 // in the given Query object
-function displayQueryResultSet (pg\Query $qry) {
+function displayQueryResultSet ($res) {
     $buff = '';
-    foreach ($qry->getResults() as $i => $rPart) {
+    foreach ($res as $i => $rPart) {
         if ($rPart instanceof pg\ResultSet) {
-            $buff .= "Result Set:\n";
+            $buff .= sprintf("Result Set: (%d results)\n", count($rPart));
             $rPart->fetchStyle = pg\ResultSet::ASSOC;
             foreach ($rPart as $row) {
                 foreach ($row as $colName => $col) {

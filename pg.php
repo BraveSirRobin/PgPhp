@@ -37,6 +37,34 @@ const ERR_LINE = 'L';
 const ERR_ROUTINE = 'R';
 
 
+// Exception wrapper for a Pg ErrorResponse message
+class PgException extends \Exception
+{
+    private $eData;
+    function __construct (wire\Message $em = null) {
+        if (!$em) {
+            parent::__construct("Invalid error condition - no message supplied", 7643);
+        } else if ($em->getName() != 'ErrorResponse') {
+            parent::__construct("Unexpected input message for PgException: " . $em->getName(), 3297);
+        } else {
+            $errCode = -1;
+            $errMsg = '(no pg error message found)';
+            foreach ($em->getData() as $eField) {
+                $this->eData[$eField[0]] = $eField[1];
+                switch ($eField[0]) {
+                case ERR_CODE:
+                    $errCode = $eField[1];
+                    break;
+                case ERR_MESSAGE:
+                    $errMsg = $eField[1];
+                    break;
+                }
+            }
+            parent::__construct($errMsg, $errCode);
+        }
+    }
+}
+
 
 
 
@@ -119,7 +147,7 @@ class Connection
                 $this->connected = true;
                 break;
             case 'ErrorResponse':
-                throw new \Exception("Connect failed (5) - error response is post-auth", 8765);
+                throw new PgException($m);
             case 'NoticeResponse':
                 throw new \Exception("Connect failed (6) - TODO: Test and implement", 8765);
             }
@@ -188,9 +216,6 @@ class Connection
         } else if ($select > 0) {
             $buff = $this->readAll();
         }
-        if ($this->debug) {
-            info("Read:\n%s", wire\hexdump($buff));
-        }
         return $buff;
     }
 
@@ -208,6 +233,10 @@ class Connection
         while (@socket_recv($this->sock, $tmp, $readLen, MSG_DONTWAIT)) {
             $buff .= $tmp;
         }
+        if ($this->debug) {
+            info("Read:\n%s", wire\hexdump($buff));
+        }
+
         return $buff;
     }
 
@@ -245,11 +274,6 @@ class Connection
                 break;
             }
 
-            if ($this->debug) {
-                info("Read:\n%s", wire\hexdump($buff));
-            }
-
-
             $r->append($buff);
             $msgs = $r->chomp();
             foreach ($msgs as $m) {
@@ -271,7 +295,9 @@ class Connection
                         $q->addResult(new Result($m));
                     }
                 case 'ErrorResponse':
-                    $q->addResult(new Result($m));
+                    // TODO: Run tests to ensure previous results of multi-query
+                    // are still available.
+                    throw new PgException($m);
                 case 'ReadyForQuery':
                     $complete = true;
                 break;
@@ -345,8 +371,8 @@ class Query
 
 
 
-/** Wrapper for non-data result types, at the moment either
-    CommandComplete or ErrorResponse */
+/** Todo: remove support for ErrorResponse - no needed now that
+    PgException is in place. */
 class Result
 {
     private $raw;
@@ -368,7 +394,8 @@ class Result
         case 'CommandComplete':
             $msg = $m->getData();
             $bits = explode(' ', $msg[0]);
-            $this->command = trim(strtoupper(reset($bits)));
+
+            $this->command = trim(strtoupper(array_shift($bits)));
             if (count($bits) > 1) {
                 list($this->commandOid, $this->affectedRows) = $bits;
             } else {
@@ -399,7 +426,7 @@ class Result
 }
 
 
-class ResultSet extends Result implements \Iterator, \ArrayAccess
+class ResultSet extends Result implements \Iterator, \ArrayAccess, \Countable
 {
     const ASSOC = 1;
     const NUMERIC = 2;
@@ -429,6 +456,10 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
 
     function offsetUnset ($ofs) {
         throw new \Exception("ResultSet is a read-only data handler [2]", 9866);
+    }
+
+    function count () {
+        return count($this->rows);
     }
 
     function addRow (wire\Message $msg) {
@@ -483,20 +514,19 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
 
 class Statement
 {
-    const ST_PARSED = 1;
-    const ST_DESCRIBED = 2;
-    const ST_BOUND = 4;
-    const ST_EXECD = 8;
+    private $conn; // Underlying Connection object
+    private $sql;  // SQL command
+    private $name = false; // Name of the statement / portal
+    private $ppTypes = array(); // Input parameter types
+    private $canExecute = false; // Internal state flag
+    private $paramDesc; // wire\Message of type ParameterDescription
+    private $resultDesc; // wire\Message of type NoData or RowDescription
 
-    private $conn;
-    private $sql;
-    private $name = false;
-    private $ppTypes = array();
-    private $st = 0;
 
     function __construct (\pg\Connection $conn) {
         $this->conn = $conn;
         $this->reader = new wire\Reader;
+        $this->writer = new wire\Writer;
     }
 
     function getState () { return $this->st; }
@@ -514,106 +544,89 @@ class Statement
         $this->name = $name;
     }
 
-    // Sends protocol messages: parse, sync, blocks for response
+    // Sends protocol messages parse, describe, sync; blocks for response
     function parse () {
-        $w = new wire\Writer;
-        $w->writeParse($this->name, $this->sql, $this->ppTypes);
-        $w->writeDescribe('S', $this->name);
-        $w->writeSync();
-        $this->conn->write($w->get());
-        $this->st = $this->st | self::ST_PARSED;
-        $this->st = $this->st & ~self::ST_DESCRIBED;
-        $this->reader->clear();
-        $this->reader->set($this->conn->read());
-        return $this->reader->chomp();
-    }
+        $this->writer->clear();
+        $this->writer->writeParse($this->name, $this->sql, $this->ppTypes);
+        $this->writer->writeDescribe('S', $this->name);
+        $this->writer->writeSync();
+        $this->conn->write($this->writer->get());
 
-    // Sends protocol messages: bind, execute, sync, blocks for response
-    function execute (array $params=array(), $rowLimit=0) {
-        $w = new wire\Writer;
-        $w->writeBind($this->name, $this->name, $params);
-        $w->writeExecute($this->name, $rowLimit);
-        $w->writeSync();
-        $this->conn->write($w->get());
-        //$this->readAndDump(); // return
-        $this->reader->clear();
-        $this->reader->set($this->conn->read());
-        return $this->reader->chomp();
-    }
-
-
-    /** Called after a command has been sent to read all messages, breaks on
-        ReadyForQuery or ErrorResponse*/
-    private function readAll () {
-        $this->reader->clear();
-
+        // Wait for the response
         $complete = false;
+        $this->reader->clear();
         while (! $complete) {
             $this->reader->append($this->conn->read());
             foreach ($this->reader->chomp() as $m) {
                 switch ($m->getName()) {
-                case 'CommandComplete':
+                case 'RowDescription':
+                case 'NoData':
+                    $this->resultDesc = $m;
+                    break;
+                case 'ParameterDescription':
+                    $this->paramDesc = $m;
+                    break;
+                case 'ReadyForQuery':
+                    $complete = true;
                     break;
                 case 'ErrorResponse':
-                    break;
+                    throw new PgException($m);
                 }
             }
-
-
-
-
-            /*
-            switch ($m->getName()) {
-            case 'RowDescription':
-                $rSet = new ResultSet($m);
-                break;
-            case 'RowData':
-                if (! $rSet) {
-                    throw new \Exception("Illegal state - no current row container", 1749);
-                }
-                $rSet->addRow($m);
-                break;
-            case 'CommandComplete':
-                if ($rSet) {
-                    $q->addResult($rSet);
-                    $rSet = null;
-                } else {
-                    $q->addResult(new Result($m));
-                }
-            case 'ErrorResponse':
-                $q->addResult(new Result($m));
-            case 'ReadyForQuery':
-                $complete = true;
-                break;
-            case 'CopyInResponse':
-                if ($cir = $q->popCopyData()) {
-                    $w->clear();
-                    $w->writeCopyData($cir);
-                    $w->writeCopyDone();
-                    info("Write Copy Data:\n%s", wire\hexdump($w->get()));
-                    $this->write($w->get());
-                } else {
-                    $w->clear();
-                    $w->writeCopyFail('No input data provided');
-                    $this->write($w->get());
-                }
-                break;
-                }*/
-
         }
+        $this->canExecute = true;
+        return true;
     }
 
+    // Sends protocol messages: bind, execute, sync, blocks for response
+    function execute (array $params=array(), $rowLimit=0) {
+        if (! $this->canExecute) {
+            throw new \Exception("Statement is not ready to execute", 7425);
+        }
+        $this->writer->clear();
+        $this->writer->writeBind($this->name, $this->name, $params);
+        $this->writer->writeExecute($this->name, $rowLimit);
+        $this->writer->writeSync();
+        $this->conn->write($this->writer->get());
+
+        $this->reader->clear();
+        $complete = $rSet = false;
+        $ret = array();
+
+        while (! $complete) {
+            $this->reader->append($this->conn->read());
+            foreach ($this->reader->chomp() as $m) {
+                switch ($m->getName()) {
+                case 'BindComplete':
+                    // Ignore this one.
+                    break;
+                case 'RowData':
+                    if (! $rSet) {
+                        $rSet = new ResultSet($this->resultDesc);
+                    }
+                    $rSet->addRow($m);
+                    break;
+                case 'CommandComplete':
+                    if ($rSet) {
+                        $ret[] = $rSet;
+                        $rSet = false;
+                    } else {
+                        $ret[] = new Result($m);
+                    }
+                    break;
+                case 'ReadyForQuery':
+                    $complete = true;
+                    break;
+                case 'ErrorResponse':
+                    throw new PgException($m);
+                }
+            }
+        }
+        return $ret;
+    }
 
 
     function close () {
-    }
-
-
-    private function readAndDump () {
-        $r = new wire\Reader($this->conn->read());
-        foreach($r->chomp() as $m) {
-            printf("Read %s\n", $m->getName());
-        }
     }
 }
 

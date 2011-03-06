@@ -129,7 +129,8 @@ class Reader
             $this->msgLen = array_pop($tmp);
 
             if (! $this->hasN($this->msgLen)) {
-                info("CHOMP EXIT: Type %s, need %d (%s)", $msgType, $this->msgLen, dechex($this->msgLen));
+                // Split response message, calling code is now expected to read more
+                // data from the Connection and append to *this* reader to complete.
                 break;
             }
             $this->p += 5;
@@ -265,7 +266,6 @@ class Reader
         $data = array(substr($this->buff, $this->p, $this->msgLen - 4));
         $this->p += $this->msgLen - 4;
         $ret =  new Message('CopyData', 'd', $data);
-        var_dump($ret);
         return $ret;
     }
 
