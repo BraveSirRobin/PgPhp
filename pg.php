@@ -182,6 +182,7 @@ class Connection
 
     function read () {
         $select = $this->select(5);
+        $buff = '';
         if ($select === false) {
             return false;
         } else if ($select > 0) {
@@ -476,6 +477,159 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
 }
 
 
+
+
+
+
+class Statement
+{
+    const ST_PARSED = 1;
+    const ST_DESCRIBED = 2;
+    const ST_BOUND = 4;
+    const ST_EXECD = 8;
+
+    private $conn;
+    private $sql;
+    private $name = false;
+    private $ppTypes = array();
+    private $st = 0;
+
+    function __construct (\pg\Connection $conn) {
+        $this->conn = $conn;
+        $this->reader = new wire\Reader;
+    }
+
+    function getState () { return $this->st; }
+
+
+    function setSql ($q) {
+        $this->sql = $q;
+    }
+
+    function setParseParamTypes (array $oids) {
+        $this->ppTypes;
+    }
+
+    function setName ($name) {
+        $this->name = $name;
+    }
+
+    // Sends protocol messages: parse, sync, blocks for response
+    function parse () {
+        $w = new wire\Writer;
+        $w->writeParse($this->name, $this->sql, $this->ppTypes);
+        $w->writeDescribe('S', $this->name);
+        $w->writeSync();
+        $this->conn->write($w->get());
+        $this->st = $this->st | self::ST_PARSED;
+        $this->st = $this->st & ~self::ST_DESCRIBED;
+        $this->reader->clear();
+        $this->reader->set($this->conn->read());
+        return $this->reader->chomp();
+    }
+
+    // Sends protocol messages: bind, execute, sync, blocks for response
+    function execute (array $params=array(), $rowLimit=0) {
+        $w = new wire\Writer;
+        $w->writeBind($this->name, $this->name, $params);
+        $w->writeExecute($this->name, $rowLimit);
+        $w->writeSync();
+        $this->conn->write($w->get());
+        //$this->readAndDump(); // return
+        $this->reader->clear();
+        $this->reader->set($this->conn->read());
+        return $this->reader->chomp();
+    }
+
+
+    /** Called after a command has been sent to read all messages, breaks on
+        ReadyForQuery or ErrorResponse*/
+    private function readAll () {
+        $this->reader->clear();
+
+        $complete = false;
+        while (! $complete) {
+            $this->reader->append($this->conn->read());
+            foreach ($this->reader->chomp() as $m) {
+                switch ($m->getName()) {
+                case 'CommandComplete':
+                    break;
+                case 'ErrorResponse':
+                    break;
+                }
+            }
+
+
+
+
+            /*
+            switch ($m->getName()) {
+            case 'RowDescription':
+                $rSet = new ResultSet($m);
+                break;
+            case 'RowData':
+                if (! $rSet) {
+                    throw new \Exception("Illegal state - no current row container", 1749);
+                }
+                $rSet->addRow($m);
+                break;
+            case 'CommandComplete':
+                if ($rSet) {
+                    $q->addResult($rSet);
+                    $rSet = null;
+                } else {
+                    $q->addResult(new Result($m));
+                }
+            case 'ErrorResponse':
+                $q->addResult(new Result($m));
+            case 'ReadyForQuery':
+                $complete = true;
+                break;
+            case 'CopyInResponse':
+                if ($cir = $q->popCopyData()) {
+                    $w->clear();
+                    $w->writeCopyData($cir);
+                    $w->writeCopyDone();
+                    info("Write Copy Data:\n%s", wire\hexdump($w->get()));
+                    $this->write($w->get());
+                } else {
+                    $w->clear();
+                    $w->writeCopyFail('No input data provided');
+                    $this->write($w->get());
+                }
+                break;
+                }*/
+
+        }
+    }
+
+
+
+    function close () {
+    }
+
+
+    private function readAndDump () {
+        $r = new wire\Reader($this->conn->read());
+        foreach($r->chomp() as $m) {
+            printf("Read %s\n", $m->getName());
+        }
+    }
+}
+
+
+function testFormat () {
+    $ri = new \RecursiveIterator(func_get_args());
+    $rii = new \RecursiveIteratorIterator($ri, LEAVES_ONLY);
+    $fmt = '';
+    foreach ($rii as $r) {
+        $fmt .= '%s, ';
+    }
+}
+
+
+
+
 // Use low level constructs to a database's type meta data
 // See: http://www.postgresql.org/docs/9.0/interactive/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
 class Meta
@@ -705,92 +859,5 @@ class ValueConverter
 
     function floatToPg ($f) {
         return (string) $f;
-    }
-}
-
-
-
-
-class Statement
-{
-    const ST_PARSED = 1;
-    const ST_DESCRIBED = 2;
-    const ST_BOUND = 4;
-    const ST_EXECD = 8;
-
-    private $conn;
-    private $sql;
-    private $name = false;
-    private $ppTypes = array();
-    private $st = 0;
-
-    function __construct (\pg\Connection $conn) {
-        $this->conn = $conn;
-    }
-
-    function getState () { return $this->st; }
-
-
-    function setSql ($q) {
-        $this->sql = $q;
-    }
-
-    function setParseParamTypes (array $oids) {
-        $this->ppTypes;
-    }
-
-    function setName ($name) {
-        $this->name = $name;
-    }
-
-    // Sends protocol messages: parse, sync, blocks for response
-    function parse () {
-        $w = new wire\Writer;
-        printf("Write parse for %s\n", $this->name);
-        $w->writeParse($this->name, $this->sql, $this->ppTypes);
-        $w->writeSync();
-        $this->conn->write($w->get());
-        $this->readAndDump();
-        $this->st = $this->st | self::ST_PARSED;
-        $this->st = $this->st & ~self::ST_DESCRIBED;
-    }
-
-    function describe () {
-        // ...
-        $this->st = $this->st | self::ST_DESCRIBED;
-    }
-
-    // Sends protocol messages: bind, execute, sync, blocks for response
-    function execute (array $params=array(), $rowLimit=0) {
-        $w = new wire\Writer;
-        $w->writeBind($this->name, $this->name, $params);
-        printf("Write bind for %s\n", $this->name);
-        $w->writeExecute($this->name, $rowLimit);
-        $w->writeSync();
-        printf("Write execute for %s\n", $this->name);
-        $this->conn->write($w->get());
-        $this->readAndDump(); // return
-    }
-
-
-    function close () {
-    }
-
-
-    private function readAndDump () {
-        $r = new wire\Reader($this->conn->read());
-        foreach($r->chomp() as $m) {
-            printf("Read %s\n", $m->getName());
-        }
-    }
-}
-
-
-function testFormat () {
-    $ri = new \RecursiveIterator(func_get_args());
-    $rii = new \RecursiveIteratorIterator($ri, LEAVES_ONLY);
-    $fmt = '';
-    foreach ($rii as $r) {
-        $fmt .= '%s, ';
     }
 }

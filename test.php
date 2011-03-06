@@ -49,35 +49,46 @@ return;
 
 
 
-/** Test code - extended query protocol  
+/** Test code - extended query protocol  */
 //$dbh->debug = true;
 
 $p = new pg\Statement($dbh);
 
-$p2 = new pg\Statement($dbh);
+//$p2 = new pg\Statement($dbh);
 
 $p->setSql('insert into nobber (moofark, floatie) values ($1, $2);');
 $p->setName('st1');
 
-$p2->setSql('select moofark from nobber limit 2');
-$p2->setName('st2');
+//$p2->setSql('select moofark from nobber where moofark = $1 limit 2');
+//$p2->setName('st2');
 
 // Typical lifecycle - parse, then execute at will
-$p2->parse();
-$p->parse();
+//echo "Parse:\n";
+//var_dump($p2->parse());
 
-$p2->execute();
-$p->execute(array('6969', '1.01'));
-$p->execute(array('7070', '1.11'));
+//echo "\n\nDescribe:\n";
+//var_dump($p2->describe());
 
-*/
+echo "\nParse\n\n";
+var_dump($p->parse());
+
+//echo "\n\nExecute:\n";
+//var_dump($p2->execute(array(69)));
+
+
+//echo "\n\nExecute (2):\n";
+//var_dump($p2->execute(array(6969)));
+var_dump($p->execute(array('6969', '1.01')));
+/*  $p->execute(array('7070', '1.11'));*/
 
 
 
-/* Test code - Meta  */
+
+
+/* Test code - Meta 
 $td = $dbh->getMeta();
 $td->dumpTypes();
-
+*/
 echo "\n\nType dictionary constructed OK\n";
 
 

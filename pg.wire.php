@@ -217,12 +217,6 @@ class Reader
     function readAuthentication () {
         $tmp = unpack('N', substr($this->buff, $this->p, 4));
         $authType = reset($tmp);
-        /*
-        $tmp = unpack('N', substr($this->buff, $this->p, 4));
-        $test = reset($tmp);
-        printf("Unpack  test: (N: %d), (l: %d)\n%s", $test, $authType, hexdump(substr($this->buff, $this->p, 4)));
-        */
-
         $this->p += 4;
         switch ($authType) {
         case 0:
@@ -354,7 +348,7 @@ class Reader
     }
 
     function readNoData () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        return new Message('NoData', 'n', array());
     }
 
     function readNoticeResponse () {
@@ -366,7 +360,16 @@ class Reader
     }
 
     function readParameterDescription () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        $data = array();
+        $tmp = unpack('n', substr($this->buff, $this->p, 2));
+        $this->p += 2;
+        $nParams = reset($tmp);
+        for ($i = 0; $i < $nParams; $i++) {
+            $tmp = unpack('N', substr($this->buff, $this->p, 4));
+            $this->p += 4;
+            $data[] = reset($tmp);
+        }
+        return new Message('ParameterDescription', 't', $data);
     }
 
     function readParameterStatus () {
@@ -457,8 +460,8 @@ class Writer
     function writeCopyFail ($reason) {
         $this->buff .= 'c' . pack('N', 5 + strlen($reason)) . "{$reason}\x00";
     }
-    function writeDescribe () {
-        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+    function writeDescribe ($flag, $name) {
+        $this->buff .= "D" . pack('N', 6 + strlen($name)) . "${flag}{$name}\x00";
     }
     function writeExecute ($stName, $maxRows=0) {
         $this->buff .= 'E' . pack('N', strlen($stName) + 9) . "{$stName}\x00" . pack('N', $maxRows);
