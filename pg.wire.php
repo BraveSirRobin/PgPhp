@@ -467,7 +467,8 @@ class Writer
         throw new \Exception("Unimplemented writer method: " . __METHOD__);
     }
     function writeFunctionCall () {
-        throw new \Exception("Unimplemented writer method: " . __METHOD__);
+        throw new \Exception("Function call protocol message is not implemented, as per the advise here:" .
+                             "http://www.postgresql.org/docs/9.0/static/protocol-flow.html#AEN84425", 8961);
     }
     function writeParse ($stName, $q, $bindParams = array()) {
         $buff = "{$stName}\x00{$q}\x00" . pack('n', count($bindParams));

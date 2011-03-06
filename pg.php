@@ -522,7 +522,12 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess, \Countable
 
 
 
-
+/**
+ * This class is used to work with the extended query protocol, call parse() to send
+ * the query to the Postgres server, then call execute one or more times to execute
+ * the prepared query.  Results are returned from execute in the same way as from
+ * Query->getResults().
+ */
 class Statement
 {
     private $conn; // Underlying Connection object
