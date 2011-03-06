@@ -26,26 +26,30 @@ try {
 
 
 
-/* Test code - Basic queries  
+
+
+
+/* Test code - Basic queries  */
 $q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
 $q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\'');
 
 
-//$q = new pg\Query('copy nobber from stdin with csv');
-//$q->pushCopyData("Hiyah!,69,2011-02-13 19:48:14.591936\n");
+//$q = new pg\Query('copy copy_test from stdin with csv');
+//$q->pushCopyData("1, Fooking Heel!\n2, Fooking Heel!\n3, Fooking Heel!\n4, Fooking Heel!\n5, Fooking Heel!\n6, Fooking Heel!\n7, Fooking Heel!\n8, Fooking Heel!");
 
 try {
     //$dbh->debug = true;
     echo "Run Query\n";
     $dbh->runQuery($q);
-    echo displayQueryResultSet($q->getResults());
 } catch (Exception $e) {
-    info("Query failed:\n%s", $e->getMessage());
+    info("An Error response was returned:\n%s", $e->getMessage());
 }
+echo displayQueryResultSet($q->getResults());
 
+$dbh->close();
 return;
-*/
+
 
 
 

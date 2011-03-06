@@ -41,7 +41,7 @@ const ERR_ROUTINE = 'R';
 class PgException extends \Exception
 {
     private $eData;
-    function __construct (wire\Message $em = null) {
+    function __construct (wire\Message $em = null, $errNum = 0) {
         if (!$em) {
             parent::__construct("Invalid error condition - no message supplied", 7643);
         } else if ($em->getName() != 'ErrorResponse') {
@@ -60,8 +60,18 @@ class PgException extends \Exception
                     break;
                 }
             }
-            parent::__construct($errMsg, $errCode);
+            parent::__construct($errMsg, $errNum);
         }
+    }
+
+    function getErrorFields () {
+        return $this->eData;
+    }
+
+    function getSqlState () {
+        return (isset($this->eData[ERR_CODE])) ?
+            $this->eData[ERR_CODE]
+            : false;
     }
 }
 
@@ -147,7 +157,7 @@ class Connection
                 $this->connected = true;
                 break;
             case 'ErrorResponse':
-                throw new PgException($m);
+                throw new PgException($m, 7585);
             case 'NoticeResponse':
                 throw new \Exception("Connect failed (6) - TODO: Test and implement", 8765);
             }
@@ -177,7 +187,7 @@ class Connection
         $bw = 0;
         $contentLength = strlen($buff);
         if ($this->debug) {
-            info("Write:\n%s", wire\hexdump($buff));
+            printf("Write:\n%s\n", wire\hexdump($buff));
         }
         while (true) {
             if (($tmp = socket_write($this->sock, $buff)) === false) {
@@ -234,7 +244,7 @@ class Connection
             $buff .= $tmp;
         }
         if ($this->debug) {
-            info("Read:\n%s", wire\hexdump($buff));
+            printf("Read:\n%s\n", wire\hexdump($buff));
         }
 
         return $buff;
@@ -294,19 +304,20 @@ class Connection
                     } else {
                         $q->addResult(new Result($m));
                     }
+                    break;
                 case 'ErrorResponse':
-                    // TODO: Run tests to ensure previous results of multi-query
-                    // are still available.
-                    throw new PgException($m);
+                    // Note that responses and response data from previous commands will
+                    // still be available as normal in the calling code (although this, and
+                    // subsequent responses aren't!)
+                    throw new PgException($m, 8751);
                 case 'ReadyForQuery':
                     $complete = true;
-                break;
+                    break;
                 case 'CopyInResponse':
                     if ($cir = $q->popCopyData()) {
                         $w->clear();
                         $w->writeCopyData($cir);
                         $w->writeCopyDone();
-                        info("Write Copy Data:\n%s", wire\hexdump($w->get()));
                         $this->write($w->get());
                     } else {
                         $w->clear();
@@ -399,7 +410,7 @@ class Result
             if (count($bits) > 1) {
                 list($this->commandOid, $this->affectedRows) = $bits;
             } else {
-                $this->affectedRows = $bits;
+                $this->affectedRows = reset($bits);
             }
             break;
         case 'RowDescription':
@@ -570,7 +581,7 @@ class Statement
                     $complete = true;
                     break;
                 case 'ErrorResponse':
-                    throw new PgException($m);
+                    throw new PgException($m, 7591);
                 }
             }
         }
@@ -618,7 +629,7 @@ class Statement
                     $complete = true;
                     break;
                 case 'ErrorResponse':
-                    throw new PgException($m);
+                    throw new PgException($m, 9653);
                 }
             }
         }
@@ -627,16 +638,6 @@ class Statement
 
 
     function close () {
-    }
-}
-
-
-function testFormat () {
-    $ri = new \RecursiveIterator(func_get_args());
-    $rii = new \RecursiveIteratorIterator($ri, LEAVES_ONLY);
-    $fmt = '';
-    foreach ($rii as $r) {
-        $fmt .= '%s, ';
     }
 }
 
