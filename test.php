@@ -76,6 +76,7 @@ $p->execute(array('7070', '1.11'));
 
 /* Test code - Meta  */
 $td = $dbh->getMeta();
+$td->dumpTypes();
 
 echo "\n\nType dictionary constructed OK\n";
 

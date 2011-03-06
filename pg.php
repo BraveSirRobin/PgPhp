@@ -324,10 +324,6 @@ class Query
         return $this->q;
     }
 
-    /*function setResultSet (array $r) {
-        $this->r = $r;
-        }*/
-
     function addResult (Result $res) {
         $this->r[] = $res;
     }
@@ -354,7 +350,7 @@ class Result
 {
     private $raw;
     private $resultType; // CommandComplete or ErrorResponse
-    private $commandType; // update, insert, etc.
+    private $command; // update, insert, etc.
     private $commandOid; // oid portion of CommandComplete response (optional)
     private $affectedRows = 0; // # of rows affected by CommandComplete
     private $errData; // Assoc array of error data
@@ -371,12 +367,15 @@ class Result
         case 'CommandComplete':
             $msg = $m->getData();
             $bits = explode(' ', $msg[0]);
-            $this->commandType = array_shift($bits);
+            $this->command = trim(strtoupper(reset($bits)));
             if (count($bits) > 1) {
                 list($this->commandOid, $this->affectedRows) = $bits;
             } else {
                 $this->affectedRows = $bits;
             }
+            break;
+        case 'RowDescription':
+            $this->command = 'INSERT';
             break;
         }
     }
@@ -386,7 +385,7 @@ class Result
     }
 
     function getCommand () {
-        return $this->commandType;
+        return $this->command;
     }
 
     function getRowsAffected () {
@@ -411,6 +410,7 @@ class ResultSet extends Result implements \Iterator, \ArrayAccess
     private $i = 0;
 
     function __construct (wire\Message $rDesc) {
+        parent::__construct($rDesc);
         $this->initCols($rDesc);
     }
 
@@ -485,10 +485,101 @@ class Meta
     private $types = array(); // Format: array(<type oid> => <typcategory code>)
     private $tables = array(); // Format: array(<table oid> => array(nspname, tablename, array(oid, colname, coltype, collen)));
     private $singleNs;
+
+
+    /** Maps Postgres catalog type Oids to PHP types */
+    function getTypeClass ($typOid) {
+        return (array_key_exists($typOid, $this->typeOidMap)) ?
+            $this->typeOidMap[$typOid]
+            : 'string';
+
+    }
+
+    // Only for docs!
+    protected $typeOids = array(
+                                  22 => 'int2vector',
+                                  30 => 'oidvector',
+                                  16 => 'bool', // boolean
+                                  702 => 'abstime',
+                                  1184 => 'timestamptz',
+                                  1114 => 'timestamp',
+                                  1083 => 'time',
+                                  1266 => 'timetz',
+                                  1082 => 'date',
+                                  604 => 'polygon',
+                                  600 => 'point',
+                                  718 => 'circle',
+                                  628 => 'line',
+                                  601 => 'lseg',
+                                  602 => 'path',
+                                  603 => 'box',
+                                  650 => 'cidr',
+                                  869 => 'inet',
+                                  3769 => 'regdictionary',
+                                  20 => 'int8',//integer
+                                  21 => 'int2y',
+                                  23 => 'int4',//integer
+                                  24 => 'regproc',
+                                  26 => 'oid',//integer
+                                  700 => 'float4',//float
+                                  701 => 'float8',//float
+                                  790 => 'money',//float
+                                  1700 => 'numeric',//float
+                                  2202 => 'regprocedure',
+                                  2203 => 'regoper',
+                                  2204 => 'regoperator',
+                                  2205 => 'regclass',
+                                  2206 => 'regtype',
+                                  3734 => 'regconfig',
+                                  18 => 'char',//string
+                                  19 => 'name',//string
+                                  25 => 'text',//string
+                                  1043 => 'varchar',//string
+                                  1042 => 'bpchar',
+                                  1186 => 'interval',
+                                  703 => 'reltime',
+                                  704 => 'tinterval',
+                                  1790 => 'refcursor',
+                                  3642 => 'gtsvector',
+                                  17 => 'bytea',//string
+                                  3615 => 'tsquery',
+                                  28 => 'xid',
+                                  29 => 'cid',
+                                  27 => 'tid',
+                                  210 => 'smgr',
+                                  2950 => 'uuid',
+                                  829 => 'macaddr',
+                                  2970 => 'txid_snapshot',
+                                  142 => 'xml',
+                                  1033 => 'aclitem',
+                                  3614 => 'tsvector',
+                                  1560 => 'bit',
+                                  1562 => 'varbit',
+                                  705 => 'unknown'
+                                  );
+
+    /** Map Postgres type Oids to PHP scalar type.  See here:
+        http://archives.postgresql.org/pgsql-novice/2010-07/msg00032.php */
+    protected $typeOidMap = array(16 => 'boolean', 20 => 'integer', 23 => 'integer', 26 => 'integer',
+                                  700 => 'float', 701 => 'float', 790 => 'float', 1700 => 'float',
+                                  18 => 'string', 19 => 'string', 25 => 'string', 1043 => 'string',
+                                  17=> 'string');
+
+
     function __construct (Connection $conn) {
         $this->conn = $conn;
         $this->initTypeCache();
         $this->initTablesCache();
+    }
+
+    function dumpTypes () {
+        // Deleteme
+        printf("Dump types:\n");
+        foreach ($this->types as $tRow) {
+            if ($tRow['typname'][0] !== '_') {
+                vprintf("  %s => %s\n", $tRow);
+            }
+        }
     }
 
     /** Load type data for the given Connection */
@@ -566,6 +657,60 @@ class Meta
     }
 }
 
+
+/** Deals with converting data between PHP variables and wire format,
+    which is actually just text.  Doesn't deal with any table-column
+    specific bounds, like char length */
+class ValueConverter
+{
+    private $meta;
+    function __construct (Meta $meta) {
+        $this->meta = $meta;
+    }
+
+    /** Use type / class sniffing to format a standard postgres const of type $typId from $v */
+    function fromVar ($v, $typId) {
+    }
+
+    /** Convert standard postgres const in $buff to a php type corresponding to $typId */
+    function toVar ($buff, $typId) {
+    }
+
+    function stringToPhp ($s) {
+        return $s;
+    }
+    function stringToPg ($s) {
+        return $s;
+    }
+
+
+    function boolToPhp ($s) {
+        return ($s[0] == 't');
+    }
+    function boolToPg ($b) {
+        return $b ? 't' : 'f';
+    }
+
+    function intToPhp ($s) {
+        return (int) $s;
+    }
+
+    function intToPg ($i) {
+        return (string) $i;
+    }
+
+    function floatToPhp ($s) {
+        return (float) $s;
+    }
+
+    function floatToPg ($f) {
+        return (string) $f;
+    }
+}
+
+
+
+
 class Statement
 {
     const ST_PARSED = 1;
@@ -640,3 +785,12 @@ class Statement
     }
 }
 
+
+function testFormat () {
+    $ri = new \RecursiveIterator(func_get_args());
+    $rii = new \RecursiveIteratorIterator($ri, LEAVES_ONLY);
+    $fmt = '';
+    foreach ($rii as $r) {
+        $fmt .= '%s, ';
+    }
+}
