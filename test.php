@@ -97,19 +97,6 @@ echo displayQueryResultSet($p->execute());
 
 
 
-
-
-
-
-
-
-/* Test code - Meta 
-$td = $dbh->getMeta();
-$td->dumpTypes();
-echo "\n\nType dictionary constructed OK\n";
-*/
-
-
 $dbh->close();
 
 
