@@ -29,7 +29,7 @@ try {
 
 
 
-/* Test code - Basic queries  */
+/* Test code - Basic queries
 $q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
 
 $q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\'');
@@ -49,12 +49,12 @@ echo displayQueryResultSet($q->getResults());
 
 $dbh->close();
 return;
+  */
 
 
 
 
-
-/** Test code - extended query protocol - Write command */
+/** Test code - extended query protocol - Write command 
 //$dbh->debug = true;
 
 $p = new pg\Statement($dbh);
@@ -68,7 +68,7 @@ var_dump($p->parse());
 echo "\nExecute\n\n";
 echo displayQueryResultSet($p->execute(array('6969', '1.01')));
 
-
+*/
 
 
 
@@ -94,6 +94,15 @@ echo displayQueryResultSet($p->execute());
 */
 
 
+
+
+
+/** Test code - notifications */
+$dbh->addChannelListener("MyChan", function ($notification) {
+        printf("Notification delivered OK!!!!\n");
+    });
+
+$dbh->testSelect();
 
 
 

@@ -96,8 +96,6 @@ class Connection
 
     private $connected = false;
 
-    private $meta;
-
     /** Connection parameters, given by postgres during setup. */
     private $params = array();
 
@@ -325,18 +323,49 @@ class Connection
                         $this->write($w->get());
                     }
                     break;
+                case 'NotificationResponse':
+                    $this->handleNotify($m);
+                    break;
                 }
             }
         }
     }
 
 
-    function getMeta () {
-        return (is_null($this->meta)) ?
-            ($this->meta = new Meta($this))
-            : $this->meta;
+
+    function addChannelListener ($cName, $callback) {
+        if (preg_match('/[^a-zA-Z0-9_]/', $cName)) {
+            throw new \Exception("Invalid channel name", 3476);
+        }
+        $q = new Query("LISTEN $cName");
+        $rs = $this->runQuery($q);
+        var_dump($rs); // TODO: Make sure we're attached!
+        $this->notifiers[$cName] = $callback;
     }
 
+    function testSelect () {
+        echo "Call Select\n";
+        $select = $this->select();
+        echo "Select returned\n";
+        $buff = '';
+        if ($select === false) {
+            return false;
+        } else if ($select > 0) {
+            $buff = $this->readAll();
+        }
+        return $buff;
+    }
+
+    function handleNotify (wire\Message $m) {
+        $nData = $m->getData();
+        if (! array_key_exists($nData[1], $this->notifiers)) {
+            trigger_error("Received notice on unexpected channel", E_USER_WARNING);
+            return false;
+        } else {
+            $nf = $this->notifiers[$nData[1]];
+            $nf($m);
+        }
+    }
 }
 
 
