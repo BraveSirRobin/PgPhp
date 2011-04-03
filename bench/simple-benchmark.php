@@ -13,12 +13,13 @@ $host = 'locahost';
 
 $b = new Bench(function () {
         echo "You ran a test!\n";
-        usleep(1000);
+        usleep(5000);
     });
 
 $b->run();
 
-var_dump($b->getResults());
+$r = $b->getResults();
+echo $b->analyse($r[0]);
 
 
 
@@ -61,7 +62,18 @@ class Bench
         $enPeakMem = memory_get_peak_usage(true);
         $enRealMem = memory_get_usage(true);
         $enMem = memory_get_usage();
-        $this->results[] = compact('stMem', 'stRealMem', 'stPeakMem', 'stMicro', 'enMicro', 'enPeakMem', 'enMem');
+        $this->results[] = compact('stMem', 'stRealMem', 'stPeakMem', 'stMicro', 'enMicro', 'enPeakMem', 'enRealMem', 'enMem');
+    }
+
+    function analyse ($result) {
+        $memDelta = bcsub($result['enMem'], $result['stMem']);
+        $realMemDelta = bcsub($result['enRealMem'], $result['stRealMem']);
+        $peakMemDelta = bcsub($result['enPeakMem'], $result['stPeakMem']);
+        $stMicro = explode(' ', $result['stMicro']);
+        $enMicro = explode(' ', $result['enMicro']);
+        $runTime = bcsub(bcadd($enMicro[0], $enMicro[1], 10), bcadd($stMicro[0], $stMicro[1], 10), 10);
+        return sprintf("memory delta: %d\nrealmem delta: %d\npeakmem delta: %d\nrun time: %f\n",
+                       $memDelta, $realMemDelta, $peakMemDelta, $runTime);
     }
 }
 
