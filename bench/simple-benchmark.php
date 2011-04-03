@@ -28,7 +28,7 @@ $dropQ = 'DROP TABLE bench_test';
  * Hard-coded test data (kinda)
  */
 $data = array();
-$nRows = 100;
+$nRows = 1000;
 $witti = new ShaksLeach('/home/robin/Downloads/shaks/');
 for ($i = 0; $i < $nRows; $i++) {
     $row = array(
@@ -42,18 +42,42 @@ for ($i = 0; $i < $nRows; $i++) {
 
 printf("Start test\n");
 $testee = new MystuffTester;
+$bench = new Bench;
 
-printf("connect\n");
-$testee->connect();
-printf("setup\n");
-$testee->setup($createQ);
-printf("write\n");
-$testee->write($insertQ, $data);
-printf("select\n");
-$testee->select($selectQ);
-printf("teardown\n");
-//$testee->teardown($dropQ);
-printf("Done.\n");
+$bench->setRunFunc(array($testee, 'connect'));
+$bench->run();
+$res = $bench->getResults();
+printf("Results for connect:\n%s\n", $bench->analyse($res[0]));
+$bench->clearResults();
+
+$bench->setRunFunc(array($testee, 'setup'), array($createQ));
+$bench->run();
+$res = $bench->getResults();
+printf("Results for setup:\n%s\n", $bench->analyse($res[0]));
+$bench->clearResults();
+
+
+$bench->setRunFunc(array($testee, 'write'), array($insertQ, $data));
+$bench->run();
+$res = $bench->getResults();
+printf("Results for write:\n%s\n", $bench->analyse($res[0]));
+$bench->clearResults();
+
+
+$bench->setRunFunc(array($testee, 'select'), array($selectQ));
+$bench->run();
+$res = $bench->getResults();
+printf("Results for select:\n%s\n", $bench->analyse($res[0]));
+$bench->clearResults();
+
+
+$bench->setRunFunc(array($testee, 'teardown'), array($dropQ));
+$bench->run();
+$res = $bench->getResults();
+printf("Results for teardown:\n%s\n", $bench->analyse($res[0]));
+$bench->clearResults();
+
+
 
 
 
@@ -125,16 +149,21 @@ class Bench
     private $runArgs;
     private $results = array();
 
-    function __construct ($runFunc, $runArgs=array()) {
+
+    function getResults () {
+        return $this->results;
+    }
+
+    function clearResults () {
+        $this->results = array();
+    }
+
+    function setRunFunc ($runFunc, $runArgs=array()) {
         if (! is_callable($runFunc)) {
             throw new Exception("Cannot benchmark nothing.", 4756);
         }
         $this->runFunc = $runFunc;
         $this->runArgs = $runArgs;
-    }
-
-    function getResults () {
-        return $this->results;
     }
 
     function run ($n=1) {
