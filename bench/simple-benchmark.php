@@ -21,6 +21,7 @@ $createQ = 'CREATE TABLE bench_test (' .
     'fld4  text)';
 
 $insertQ = 'INSERT INTO bench_test (fld1, fld2, fld3, fld4) VALUES ($1, $2, $3, $4)';
+$insertQ2 = 'INSERT INTO bench_test (fld1, fld2, fld3, fld4) VALUES (?, ?, ?, ?)';
 $selectQ = 'SELECT * FROM bench_test';
 $dropQ = 'DROP TABLE bench_test';
 
@@ -41,7 +42,15 @@ for ($i = 0; $i < $nRows; $i++) {
 
 
 printf("Start test\n");
-$testee = new MystuffTester;
+
+
+// Either
+$testee = new NativeTester;
+$insertQ = $insertQ2;
+
+// OR
+//$testee = new MystuffTester;
+
 $bench = new Bench;
 
 $bench->setRunFunc(array($testee, 'connect'));
@@ -125,18 +134,30 @@ class MystuffTester
 class NativeTester
 {
     function connect () {
+        $this->dbh = new PDO('pgsql:host=localhost;dbname=test1;user=php;password=letmein');
+        $this->dbh->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     }
 
     function setup ($create) {
+        $this->dbh->exec($create);
     }
 
-    function write ($data) {
+    function write ($q, $data) {
+        $st = $this->dbh->prepare($q);
+        foreach ($data as $row) {
+            $st->execute($row);
+        }
     }
 
-    function select () {
+    function select ($q) {
+        $st = $this->dbh->prepare($q);
+        $st->execute();
+        $data = $st->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    function teardown () {
+    function teardown ($q) {
+        $st = $this->dbh->prepare($q);
+        $st->execute();
     }
 }
 
