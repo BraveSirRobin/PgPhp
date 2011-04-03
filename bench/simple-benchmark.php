@@ -9,19 +9,112 @@ require (dirname(__FILE__) . '/../pg.php');
 
 $host = 'locahost';
 
-//$l = new ShaksLeach('/home/robin/Downloads/shaks/');
-
-$b = new Bench(function () {
-        echo "You ran a test!\n";
-        usleep(5000);
-    });
-
-$b->run();
-
-$r = $b->getResults();
-echo $b->analyse($r[0]);
 
 
+/**
+ * Hard-coded test table!
+ */
+$createQ = 'CREATE TABLE bench_test (' .
+    'fld1  character varying (512), ' .
+    'fld2  character varying (512), ' .
+    'fld3  text, ' .
+    'fld4  text)';
+
+$insertQ = 'INSERT INTO bench_test (fld1, fld2, fld3, fld4) VALUES ($1, $2, $3, $4)';
+$selectQ = 'SELECT * FROM bench_test';
+$dropQ = 'DROP TABLE bench_test';
+
+/**
+ * Hard-coded test data (kinda)
+ */
+$data = array();
+$nRows = 100;
+$witti = new ShaksLeach('/home/robin/Downloads/shaks/');
+for ($i = 0; $i < $nRows; $i++) {
+    $row = array(
+        substr(implode(' ', $witti->getLines(8)), 0, 512),
+        substr(implode(' ', $witti->getLines(8)), 0, 512),
+        implode(' ', $witti->getLines(16)),
+        implode(' ', $witti->getLines(24)));
+    $data[] = $row;
+}
+
+
+printf("Start test\n");
+$testee = new MystuffTester;
+
+printf("connect\n");
+$testee->connect();
+printf("setup\n");
+$testee->setup($createQ);
+printf("write\n");
+$testee->write($insertQ, $data);
+printf("select\n");
+$testee->select($selectQ);
+printf("teardown\n");
+//$testee->teardown($dropQ);
+printf("Done.\n");
+
+
+
+
+class MystuffTester
+{
+    private $dbh;
+    function connect () {
+        $this->dbh = new pg\Connection;
+        $this->dbh->connect();
+    }
+    function setup ($create) {
+        $q = new pg\Query($create);
+        $this->dbh->runQuery($q);
+    }
+
+    function write ($q, $data) {
+        $p = new pg\Statement($this->dbh);
+        $p->setSql($q);
+        $p->setName('st1');
+        $p->parse();
+        foreach ($data as $row) {
+            $p->execute($row);
+        }
+    }
+
+    function select ($q) {
+        $p = new pg\Statement($this->dbh);
+        $p->setSql($q);
+        $p->setName('st2');
+        $p->parse();
+        $p->execute();
+    }
+
+    function teardown ($q) {
+        $p = new pg\Statement($this->dbh);
+        $p->setSql($q);
+        $p->setName('st3');
+        $p->parse();
+        $p->execute();
+    }
+}
+
+
+class NativeTester
+{
+    function connect () {
+    }
+
+    function setup ($create) {
+    }
+
+    function write ($data) {
+    }
+
+    function select () {
+    }
+
+    function teardown () {
+    }
+}
 
 
 
@@ -113,7 +206,7 @@ class ShaksLeach
         foreach (glob("{$this->shaksPath}/*.xml") as $sFile) {
             $r = new XMLReader;
             $r->open($sFile);
-            printf("Process file %s\n", $sFile);
+            //printf("Process file %s\n", $sFile);
             while ($r->read()) {
                 if ($r->nodeType == XMLReader::ELEMENT && strtolower($r->name) == 'line') {
                     $r->read();
