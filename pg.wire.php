@@ -325,6 +325,11 @@ class Reader
     }
 
     function readErrorResponse () {
+        $data = $this->readNoticeDataError();
+        return new Message('ErrorResponse', 'E', $data);
+    }
+
+    private function readNoticeDataError () {
         $data = array();
         $ep = $this->p + $this->msgLen - 5;
         while ($this->p < $ep) {
@@ -336,7 +341,7 @@ class Reader
         if (reset($tmp) !== 0) {
             throw new \Exception("Protocol error - missed error response end", 4380);
         }
-        return new Message('ErrorResponse', 'E', $data);
+        return $data;
     }
 
     function readFunctionCallResponse () {
@@ -348,7 +353,8 @@ class Reader
     }
 
     function readNoticeResponse () {
-        throw new \Exception("Message read method not implemented: " . __METHOD__);
+        $data = $this->readNoticeDataError();
+        return new Message('NoticeResponse', 'N', $data);
     }
 
     function readNotificationResponse () {
