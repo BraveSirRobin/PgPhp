@@ -1,7 +1,7 @@
 PgPhp - An implementation of the postgres client / server protocol in pure PHP
 ==============================================================================
 
-Development status :  Toy.  Works for me, and  it supports the protcol
+Development status :  Toy.  Works for me, and it supports the protocol
 COPY command too, which is nice.
 
 Motivation : I wrote this library as a proof of concept and to learn a
