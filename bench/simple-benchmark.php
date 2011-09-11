@@ -355,7 +355,8 @@ class Bench
 
 
 /**
- * Spits back randomisations of Shakespear, used to construct test data sets.
+ * Spits  back randomisations  of Shakespear,  used to  construct test
+ * data sets.
  */
 class ShaksLeach
 {
