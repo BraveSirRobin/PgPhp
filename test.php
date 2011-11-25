@@ -30,9 +30,9 @@ try {
 
 
 /* Test code - Basic queries
-$q = new pg\Query('select * from nobber;insert into nobber (fanneh) values (\'shitface\');');
+$q = new pg\Query('select * from da_table;insert into da_table (lady_curtain) values (\'Whale oil beef hooked\');');
 
-$q = new pg\Query('select * from nobber where fanneh = \'K\';select * from nobber;update nobber set fanneh=\'Hiyah!!\' where fanneh=\'Hiyah!\'');
+$q = new pg\Query('select * from da_table where lady_curtain = \'K\';select * from da_table;update da_table set lady_curtain=\'Hiyah!!\' where lady_curtain=\'Hiyah!\'');
 
 
 //$q = new pg\Query('copy copy_test from stdin with csv');
@@ -59,7 +59,7 @@ return;
 
 $p = new pg\Statement($dbh);
 
-$p->setSql('insert into nobber (moofark, floatie) values ($1, $2);');
+$p->setSql('insert into da_table (moofark, floatie) values ($1, $2);');
 $p->setName('st1');
 
 echo "\nParse\n\n";
@@ -83,7 +83,7 @@ echo displayQueryResultSet($p->execute(array('6969', '1.01')));
 
 $p = new pg\Statement($dbh);
 
-$p->setSql('select * from nobber n1');
+$p->setSql('select * from da_table n1');
 $p->setName('st3');
 
 echo "\nParse\n\n";
